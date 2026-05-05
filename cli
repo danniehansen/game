@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+cmd="${1:-help}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+close_existing_game() {
+  pkill -x "Game" >/dev/null 2>&1 || true
+  pkill -x "game" >/dev/null 2>&1 || true
+  pkill -f "target/debug/game" >/dev/null 2>&1 || true
+}
+
+copy_release_binary() {
+  local target="$1"
+  local ext=""
+  if [[ "$target" == *"windows"* ]]; then
+    ext=".exe"
+  fi
+
+  local src="target/${target}/release/game${ext}"
+  local out_dir="builds/${target}"
+  local out="${out_dir}/Game${ext}"
+
+  mkdir -p "$out_dir"
+  cp "$src" "$out"
+  echo "built ${out}"
+}
+
+publish_target() {
+  local target="$1"
+
+  rustup target add "$target" >/dev/null
+  if cargo build --release --target "$target"; then
+    copy_release_binary "$target"
+  else
+    echo "failed to build ${target}; install the target linker/toolchain and rerun ./cli publish" >&2
+    return 1
+  fi
+}
+
+case "$cmd" in
+  dev)
+    close_existing_game
+    cargo run --bin game -- client "$@"
+    ;;
+  server)
+    cargo run --bin game -- server "$@"
+    ;;
+  check)
+    cargo check --all-targets
+    ;;
+  test)
+    cargo test --all-targets
+    ;;
+  lint)
+    cargo fmt --all -- --check
+    cargo clippy --all-targets --all-features -- -D warnings
+    ;;
+  coverage)
+    if cargo llvm-cov --version >/dev/null 2>&1; then
+      cargo llvm-cov --all-targets --all-features --text
+    else
+      cargo test --all-targets
+      echo "cargo-llvm-cov is not installed; install it for line coverage text: cargo install cargo-llvm-cov" >&2
+    fi
+    ;;
+  build)
+    cargo build "$@"
+    ;;
+  publish)
+    rm -rf builds
+    mkdir -p builds
+    failed=0
+    for target in \
+      aarch64-apple-darwin \
+      x86_64-apple-darwin \
+      x86_64-unknown-linux-gnu \
+      x86_64-pc-windows-gnu
+    do
+      publish_target "$target" || failed=1
+    done
+    exit "$failed"
+    ;;
+  help|*)
+    cat <<'EOF'
+Usage: ./cli <command> [args]
+
+Commands:
+  dev          Close existing Game windows and run the Bevy client.
+  server       Run a dedicated authoritative server. Pass --help after server for flags.
+  check        Run cargo check for all targets.
+  test         Run unit/integration tests.
+  lint         Run rustfmt check and clippy with warnings denied.
+  coverage     Print text coverage when cargo-llvm-cov is installed, otherwise run tests.
+  build        Run cargo build with any extra args.
+  publish      Build release binaries into builds/ for macOS, Linux, and Windows targets.
+EOF
+    ;;
+esac

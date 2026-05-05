@@ -1,0 +1,322 @@
+use std::collections::HashMap;
+
+use anyhow::{Result, bail};
+
+use crate::{
+    protocol::{
+        ChatMessage, ClientId, ClientMessage, PROTOCOL_VERSION, PlayerEvent, PlayerInput,
+        PlayerState, ServerMessage, SteamId, Vec3Net, WorldSnapshot, sanitize_chat,
+    },
+    save::WorldSave,
+    steam::{AuthMode, verify_auth_ticket},
+};
+
+const WALK_SPEED: f32 = 4.5;
+const SPRINT_SPEED: f32 = 7.0;
+const SPAWN_HEIGHT: f32 = 0.8;
+
+#[derive(Debug, Clone)]
+pub struct ServerSettings {
+    pub auth_mode: AuthMode,
+    pub singleplayer_host: Option<SteamId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveryTarget {
+    Client(ClientId),
+    Broadcast,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerEnvelope {
+    pub target: DeliveryTarget,
+    pub message: ServerMessage,
+}
+
+#[derive(Debug)]
+pub struct GameServer {
+    save: WorldSave,
+    settings: ServerSettings,
+    clients: HashMap<ClientId, ServerClient>,
+    steam_to_client: HashMap<SteamId, ClientId>,
+    next_client_id: ClientId,
+    tick: u64,
+}
+
+impl GameServer {
+    pub fn new(mut save: WorldSave, settings: ServerSettings) -> Self {
+        if let Some(host) = settings.singleplayer_host
+            && !save.admins.contains(&host)
+        {
+            save.admins.push(host);
+        }
+
+        Self {
+            tick: save.state.last_authoritative_tick,
+            save,
+            settings,
+            clients: HashMap::new(),
+            steam_to_client: HashMap::new(),
+            next_client_id: 1,
+        }
+    }
+
+    pub fn world_seed(&self) -> u64 {
+        self.save.seed
+    }
+
+    pub fn world_save(&self) -> WorldSave {
+        let mut save = self.save.clone();
+        save.state.last_authoritative_tick = self.tick;
+        save
+    }
+
+    pub fn connect(
+        &mut self,
+        protocol_version: u32,
+        steam_id: SteamId,
+        display_name: String,
+        token: String,
+    ) -> Result<(ClientId, Vec<ServerEnvelope>)> {
+        if protocol_version != PROTOCOL_VERSION {
+            bail!("protocol mismatch: client {protocol_version}, server {PROTOCOL_VERSION}");
+        }
+
+        verify_auth_ticket(self.settings.auth_mode, steam_id, &token)?;
+
+        if self.steam_to_client.contains_key(&steam_id) {
+            bail!("this Steam user is already connected");
+        }
+
+        let client_id = self.next_client_id;
+        self.next_client_id += 1;
+
+        let is_admin = self.is_admin(steam_id);
+        let name = clean_player_name(&display_name, client_id);
+        let client = ServerClient {
+            client_id,
+            steam_id,
+            name: name.clone(),
+            position: Vec3Net::new(0.0, SPAWN_HEIGHT, 0.0),
+            velocity: Vec3Net::ZERO,
+            last_input: PlayerInput {
+                sequence: 0,
+                direction: Vec3Net::ZERO,
+                sprint: false,
+            },
+            is_admin,
+        };
+
+        self.clients.insert(client_id, client);
+        self.steam_to_client.insert(steam_id, client_id);
+
+        let snapshot = self.snapshot();
+        Ok((
+            client_id,
+            vec![
+                ServerEnvelope {
+                    target: DeliveryTarget::Client(client_id),
+                    message: ServerMessage::Welcome {
+                        client_id,
+                        world_seed: self.save.seed,
+                        is_admin,
+                        snapshot,
+                    },
+                },
+                ServerEnvelope {
+                    target: DeliveryTarget::Broadcast,
+                    message: ServerMessage::PlayerEvent(PlayerEvent::Joined { client_id, name }),
+                },
+            ],
+        ))
+    }
+
+    pub fn receive(&mut self, client_id: ClientId, message: ClientMessage) -> Vec<ServerEnvelope> {
+        match message {
+            ClientMessage::Auth { .. } => vec![ServerEnvelope {
+                target: DeliveryTarget::Client(client_id),
+                message: ServerMessage::AuthRejected {
+                    reason: "client is already authenticated".to_owned(),
+                },
+            }],
+            ClientMessage::Input(input) => {
+                if let Some(client) = self.clients.get_mut(&client_id)
+                    && input.sequence >= client.last_input.sequence
+                {
+                    client.last_input = input;
+                }
+                Vec::new()
+            }
+            ClientMessage::Chat { text } => sanitize_chat(&text)
+                .and_then(|text| {
+                    self.clients.get(&client_id).map(|client| ServerEnvelope {
+                        target: DeliveryTarget::Broadcast,
+                        message: ServerMessage::Chat(ChatMessage {
+                            from: client.name.clone(),
+                            text,
+                        }),
+                    })
+                })
+                .into_iter()
+                .collect(),
+            ClientMessage::Disconnect => self.disconnect(client_id),
+        }
+    }
+
+    pub fn disconnect(&mut self, client_id: ClientId) -> Vec<ServerEnvelope> {
+        let Some(client) = self.clients.remove(&client_id) else {
+            return Vec::new();
+        };
+
+        self.steam_to_client.remove(&client.steam_id);
+        vec![ServerEnvelope {
+            target: DeliveryTarget::Broadcast,
+            message: ServerMessage::PlayerEvent(PlayerEvent::Left {
+                client_id,
+                name: client.name,
+            }),
+        }]
+    }
+
+    pub fn tick(&mut self, delta_seconds: f32) -> Vec<ServerEnvelope> {
+        self.tick += 1;
+        self.save.state.last_authoritative_tick = self.tick;
+
+        for client in self.clients.values_mut() {
+            let speed = if client.last_input.sprint {
+                SPRINT_SPEED
+            } else {
+                WALK_SPEED
+            };
+            let direction = client.last_input.direction.normalize_or_zero();
+            client.velocity = direction.scale(speed);
+            client.position = client.position.plus(client.velocity.scale(delta_seconds));
+            client.position.y = SPAWN_HEIGHT;
+        }
+
+        vec![ServerEnvelope {
+            target: DeliveryTarget::Broadcast,
+            message: ServerMessage::Snapshot(self.snapshot()),
+        }]
+    }
+
+    pub fn snapshot(&self) -> WorldSnapshot {
+        let mut players = self
+            .clients
+            .values()
+            .map(|client| PlayerState {
+                client_id: client.client_id,
+                steam_id: client.steam_id,
+                name: client.name.clone(),
+                position: client.position,
+                velocity: client.velocity,
+                is_admin: client.is_admin,
+            })
+            .collect::<Vec<_>>();
+        players.sort_by_key(|player| player.client_id);
+
+        WorldSnapshot {
+            tick: self.tick,
+            players,
+        }
+    }
+
+    fn is_admin(&self, steam_id: SteamId) -> bool {
+        self.settings.singleplayer_host == Some(steam_id) || self.save.admins.contains(&steam_id)
+    }
+}
+
+#[derive(Debug)]
+struct ServerClient {
+    client_id: ClientId,
+    steam_id: SteamId,
+    name: String,
+    position: Vec3Net,
+    velocity: Vec3Net,
+    last_input: PlayerInput,
+    is_admin: bool,
+}
+
+fn clean_player_name(name: &str, fallback_id: ClientId) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        format!("Player {fallback_id}")
+    } else {
+        trimmed.chars().take(32).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        protocol::{ClientMessage, PROTOCOL_VERSION},
+        save::WorldSave,
+        steam::offline_auth_token,
+    };
+
+    fn server() -> GameServer {
+        GameServer::new(
+            WorldSave::new("Test", Some(1)),
+            ServerSettings {
+                auth_mode: AuthMode::Offline,
+                singleplayer_host: Some(1),
+            },
+        )
+    }
+
+    #[test]
+    fn singleplayer_host_is_admin() {
+        let mut server = server();
+        let (client_id, envelopes) = server
+            .connect(
+                PROTOCOL_VERSION,
+                1,
+                "Host".to_owned(),
+                offline_auth_token(1),
+            )
+            .expect("host should connect");
+
+        assert_eq!(client_id, 1);
+        assert!(matches!(
+            &envelopes[0].message,
+            ServerMessage::Welcome { is_admin: true, .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_auth() {
+        let mut server = server();
+        assert!(
+            server
+                .connect(PROTOCOL_VERSION, 2, "Bad".to_owned(), "wrong".to_owned())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn movement_is_authoritative_on_tick() {
+        let mut server = server();
+        let (client_id, _) = server
+            .connect(
+                PROTOCOL_VERSION,
+                1,
+                "Host".to_owned(),
+                offline_auth_token(1),
+            )
+            .expect("host should connect");
+
+        server.receive(
+            client_id,
+            ClientMessage::Input(PlayerInput {
+                sequence: 1,
+                direction: Vec3Net::new(1.0, 0.0, 0.0),
+                sprint: false,
+            }),
+        );
+        server.tick(1.0);
+
+        let snapshot = server.snapshot();
+        assert!((snapshot.players[0].position.x - WALK_SPEED).abs() < 0.001);
+    }
+}
