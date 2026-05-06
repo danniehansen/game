@@ -66,6 +66,8 @@ pub(super) fn multiplayer_ui(
                                         runtime.start_session(session, None);
                                         menu.screen = Screen::InGame;
                                         menu.pause_open = false;
+                                        menu.chat_open = false;
+                                        menu.chat_focus_pending = false;
                                         menu.status = None;
                                     }
                                     Err(error) => {

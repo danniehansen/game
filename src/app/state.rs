@@ -11,6 +11,8 @@ use crate::{
     steam::AuthenticatedUser,
 };
 
+const MAX_CLIENT_LOG_MESSAGES: usize = 80;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
     MainMenu,
@@ -37,6 +39,8 @@ pub(crate) struct MenuState {
     pub(crate) multiplayer_addr: String,
     pub(crate) status: Option<String>,
     pub(crate) pause_open: bool,
+    pub(crate) chat_open: bool,
+    pub(crate) chat_focus_pending: bool,
     pub(crate) chat_input: String,
     pub(crate) confirmation: Option<ConfirmationDialog>,
 }
@@ -50,8 +54,46 @@ impl Default for MenuState {
             multiplayer_addr: "127.0.0.1:7777".to_owned(),
             status: None,
             pause_open: false,
+            chat_open: false,
+            chat_focus_pending: false,
             chat_input: String::new(),
             confirmation: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClientLogKind {
+    System,
+    Error,
+    Chat { from: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ClientLogEntry {
+    pub(crate) kind: ClientLogKind,
+    pub(crate) text: String,
+}
+
+impl ClientLogEntry {
+    fn system(text: impl Into<String>) -> Self {
+        Self {
+            kind: ClientLogKind::System,
+            text: text.into(),
+        }
+    }
+
+    fn error(text: impl Into<String>) -> Self {
+        Self {
+            kind: ClientLogKind::Error,
+            text: text.into(),
+        }
+    }
+
+    fn chat(from: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            kind: ClientLogKind::Chat { from: from.into() },
+            text: text.into(),
         }
     }
 }
@@ -94,7 +136,7 @@ pub(crate) struct ClientRuntime {
     pub(crate) is_admin: bool,
     pub(crate) snapshot: Option<WorldSnapshot>,
     pub(crate) predicted_local: Option<PlayerController>,
-    pub(crate) messages: Vec<String>,
+    pub(crate) messages: Vec<ClientLogEntry>,
     pub(crate) input_sequence: u64,
 }
 
@@ -114,7 +156,7 @@ impl ClientRuntime {
         if let Some(session) = self.session.as_mut()
             && let Err(error) = session.shutdown(store)
         {
-            self.messages.push(format!("save/shutdown error: {error}"));
+            self.push_error_message(format!("save/shutdown error: {error}"));
         }
 
         self.session = None;
@@ -137,24 +179,41 @@ impl ClientRuntime {
                 self.is_admin = is_admin;
                 self.sync_prediction_from_snapshot(&snapshot, true);
                 self.snapshot = Some(snapshot);
-                self.messages
-                    .push(format!("connected as player {client_id}"));
+                self.push_system_message(format!("connected as player {client_id}"));
             }
             ServerMessage::AuthRejected { reason } => {
-                self.messages.push(format!("auth rejected: {reason}"));
+                self.push_error_message(format!("auth rejected: {reason}"));
             }
-            ServerMessage::PlayerEvent(event) => self.messages.push(format_player_event(event)),
+            ServerMessage::PlayerEvent(event) => {
+                self.push_system_message(format_player_event(event))
+            }
             ServerMessage::Snapshot(snapshot) => {
                 self.sync_prediction_from_snapshot(&snapshot, false);
                 self.snapshot = Some(snapshot);
             }
             ServerMessage::Chat(ChatMessage { from, text }) => {
-                self.messages.push(format!("{from}: {text}"));
+                self.push_chat_message(from, text);
             }
         }
+    }
 
-        if self.messages.len() > 80 {
-            let drain_count = self.messages.len() - 80;
+    pub(crate) fn push_system_message(&mut self, text: impl Into<String>) {
+        self.push_message(ClientLogEntry::system(text));
+    }
+
+    pub(crate) fn push_error_message(&mut self, text: impl Into<String>) {
+        self.push_message(ClientLogEntry::error(text));
+    }
+
+    pub(crate) fn push_chat_message(&mut self, from: impl Into<String>, text: impl Into<String>) {
+        self.push_message(ClientLogEntry::chat(from, text));
+    }
+
+    fn push_message(&mut self, message: ClientLogEntry) {
+        self.messages.push(message);
+
+        if self.messages.len() > MAX_CLIENT_LOG_MESSAGES {
+            let drain_count = self.messages.len() - MAX_CLIENT_LOG_MESSAGES;
             self.messages.drain(0..drain_count);
         }
     }

@@ -17,8 +17,23 @@ use super::{
     state::{ClientRuntime, LookState, MenuState, Screen},
 };
 
+pub(crate) fn chat_shortcut_system(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
+    if menu.screen != Screen::InGame || menu.pause_open || menu.chat_open {
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::KeyT) {
+        menu.chat_open = true;
+        menu.chat_focus_pending = true;
+        menu.chat_input.clear();
+    }
+}
+
 pub(crate) fn toggle_pause_system(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
     if menu.screen != Screen::InGame {
+        return;
+    }
+    if menu.chat_open {
         return;
     }
 
@@ -31,7 +46,7 @@ pub(crate) fn update_cursor_system(
     mut cursor_options: Single<&mut CursorOptions>,
     menu: Res<MenuState>,
 ) {
-    let should_capture = menu.screen == Screen::InGame && !menu.pause_open;
+    let should_capture = menu.screen == Screen::InGame && !menu.pause_open && !menu.chat_open;
     cursor_options.visible = !should_capture;
     cursor_options.grab_mode = if should_capture {
         CursorGrabMode::Locked
@@ -45,7 +60,7 @@ pub(crate) fn mouse_look_system(
     mut look: ResMut<LookState>,
     menu: Res<MenuState>,
 ) {
-    if menu.screen != Screen::InGame || menu.pause_open {
+    if menu.screen != Screen::InGame || menu.pause_open || menu.chat_open {
         return;
     }
 
@@ -66,7 +81,7 @@ pub(crate) fn client_input_system(
     menu: Res<MenuState>,
     look: Res<LookState>,
 ) {
-    if menu.screen != Screen::InGame || menu.pause_open {
+    if menu.screen != Screen::InGame || menu.pause_open || menu.chat_open {
         return;
     }
     if runtime.client_id.is_none() {
@@ -124,7 +139,7 @@ pub(crate) fn network_tick_system(
     let messages = match tick_result {
         Some(Ok(messages)) => messages,
         Some(Err(error)) => {
-            runtime.messages.push(format!("network error: {error}"));
+            runtime.push_error_message(format!("network error: {error}"));
             Vec::new()
         }
         None => Vec::new(),

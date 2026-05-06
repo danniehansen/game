@@ -47,6 +47,8 @@ pub(super) fn pause_ui(
                         runtime.shutdown(&store.0);
                         menu.screen = Screen::MainMenu;
                         menu.pause_open = false;
+                        menu.chat_open = false;
+                        menu.chat_focus_pending = false;
                     }
                 });
             });

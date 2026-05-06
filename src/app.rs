@@ -19,7 +19,7 @@ use self::{
     scene::setup_scene,
     state::{ClientRuntime, LookState, MenuState, SaveStore, SteamUser},
     systems::{
-        apply_snapshot_system, camera_follow_system, client_input_system,
+        apply_snapshot_system, camera_follow_system, chat_shortcut_system, client_input_system,
         interpolate_players_system, mouse_look_system, network_tick_system, toggle_pause_system,
         update_cursor_system,
     },
@@ -55,6 +55,14 @@ pub fn run_app() -> Result<()> {
         .add_plugins(EguiPlugin::default())
         .add_systems(Startup, setup_scene)
         .add_systems(EguiPrimaryContextPass, ui_system)
+        .add_systems(
+            Update,
+            chat_shortcut_system
+                .before(toggle_pause_system)
+                .before(update_cursor_system)
+                .before(mouse_look_system)
+                .before(client_input_system),
+        )
         .add_systems(
             Update,
             toggle_pause_system.run_if(not(egui_wants_any_keyboard_input)),

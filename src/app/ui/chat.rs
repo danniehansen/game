@@ -1,62 +1,245 @@
 use bevy_egui::egui;
 
-use crate::protocol::ClientMessage;
-
-use crate::app::state::{ClientRuntime, MenuState};
+use crate::{
+    app::state::{ClientLogEntry, ClientLogKind, ClientRuntime, MenuState},
+    protocol::ClientMessage,
+};
 
 use super::theme;
 
-const CHAT_WIDTH: f32 = 390.0;
+const CHAT_WIDTH: f32 = 430.0;
+const CHAT_INACTIVE_MESSAGE_HEIGHT: f32 = 122.0;
+const CHAT_ACTIVE_MESSAGE_HEIGHT: f32 = 156.0;
+const CHAT_INPUT_WIDTH: f32 = CHAT_WIDTH - 22.0;
+const CHAT_INPUT_HEIGHT: f32 = 30.0;
+const CHAT_INPUT_ID: &str = "game_chat_input";
 
 pub(super) fn chat_ui(ctx: &egui::Context, menu: &mut MenuState, runtime: &mut ClientRuntime) {
-    egui::Area::new("chat".into())
-        .anchor(egui::Align2::LEFT_BOTTOM, [16.0, -16.0])
-        .show(ctx, |ui| {
-            egui::Frame::NONE
-                .fill(egui::Color32::from_rgba_unmultiplied(6, 9, 13, 150))
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    egui::Color32::from_rgba_unmultiplied(115, 132, 151, 58),
-                ))
-                .corner_radius(6)
-                .inner_margin(egui::Margin::symmetric(10, 9))
-                .show(ui, |ui| {
-                    ui.set_width(CHAT_WIDTH);
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .max_height(132.0)
-                        .show(ui, |ui| {
-                            for message in &runtime.messages {
-                                ui.label(egui::RichText::new(message).size(12.5).color(
-                                    egui::Color32::from_rgba_unmultiplied(224, 231, 238, 210),
-                                ));
-                            }
-                        });
+    let opened_this_frame = handle_chat_shortcuts(ctx, menu);
+    let active = menu.chat_open && !menu.pause_open;
 
-                    ui.add_space(5.0);
-                    let response = ui.add(
-                        theme::text_input(&mut menu.chat_input)
-                            .hint_text("Chat")
-                            .desired_width(CHAT_WIDTH - 20.0),
-                    );
-                    if response.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                    {
-                        send_chat(menu, runtime);
-                    }
-                });
+    egui::Area::new("chat".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::LEFT_BOTTOM, [18.0, -18.0])
+        .show(ctx, |ui| {
+            chat_frame(active).show(ui, |ui| {
+                ui.set_width(CHAT_WIDTH);
+                draw_messages(ui, &runtime.messages, active);
+                ui.add_space(8.0);
+                if active {
+                    draw_active_input(ui, menu, runtime, opened_this_frame);
+                } else {
+                    draw_inactive_input(ui, menu);
+                }
+            });
         });
 }
 
-fn send_chat(menu: &mut MenuState, runtime: &mut ClientRuntime) {
+fn handle_chat_shortcuts(ctx: &egui::Context, menu: &mut MenuState) -> bool {
+    if menu.pause_open || menu.chat_open {
+        return false;
+    }
+
+    let should_open = ctx.input(|input| {
+        let modifiers_allow_text =
+            !input.modifiers.command && !input.modifiers.ctrl && !input.modifiers.alt;
+        modifiers_allow_text
+            && (input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::T))
+    });
+
+    if should_open {
+        menu.chat_open = true;
+        menu.chat_focus_pending = true;
+        menu.chat_input.clear();
+    }
+
+    should_open
+}
+
+fn chat_frame(active: bool) -> egui::Frame {
+    let fill_alpha = if active { 224 } else { 150 };
+    let stroke_alpha = if active { 108 } else { 48 };
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgba_unmultiplied(5, 8, 12, fill_alpha))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(115, 132, 151, stroke_alpha),
+        ))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(11, 10))
+}
+
+fn draw_messages(ui: &mut egui::Ui, messages: &[ClientLogEntry], active: bool) {
+    let max_height = if active {
+        CHAT_ACTIVE_MESSAGE_HEIGHT
+    } else {
+        CHAT_INACTIVE_MESSAGE_HEIGHT
+    };
+
+    egui::ScrollArea::vertical()
+        .stick_to_bottom(true)
+        .auto_shrink([false, false])
+        .max_height(max_height)
+        .show(ui, |ui| {
+            ui.set_width(CHAT_WIDTH - 22.0);
+            for message in messages {
+                draw_message(ui, message);
+            }
+        });
+}
+
+fn draw_message(ui: &mut egui::Ui, message: &ClientLogEntry) {
+    match &message.kind {
+        ClientLogKind::System => {
+            ui.label(
+                egui::RichText::new(&message.text)
+                    .size(12.5)
+                    .color(egui::Color32::from_rgb(198, 185, 143)),
+            );
+        }
+        ClientLogKind::Error => {
+            ui.label(
+                egui::RichText::new(&message.text)
+                    .size(12.5)
+                    .color(egui::Color32::from_rgb(255, 128, 128)),
+            );
+        }
+        ClientLogKind::Chat { from } => {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(
+                    egui::RichText::new("[Global]")
+                        .size(12.5)
+                        .strong()
+                        .color(egui::Color32::from_rgb(91, 168, 255)),
+                );
+                ui.label(
+                    egui::RichText::new(from)
+                        .size(12.5)
+                        .strong()
+                        .color(egui::Color32::from_rgb(230, 232, 236)),
+                );
+                ui.label(
+                    egui::RichText::new(":")
+                        .size(12.5)
+                        .color(theme::muted_text()),
+                );
+                ui.label(
+                    egui::RichText::new(&message.text)
+                        .size(12.5)
+                        .color(egui::Color32::from_rgb(224, 231, 238)),
+                );
+            });
+        }
+    }
+}
+
+fn draw_active_input(
+    ui: &mut egui::Ui,
+    menu: &mut MenuState,
+    runtime: &mut ClientRuntime,
+    opened_this_frame: bool,
+) {
+    let input_id = egui::Id::new(CHAT_INPUT_ID);
+    let rect = allocate_input_rect(ui);
+    paint_input_background(ui, rect);
+    let response = ui.put(
+        input_text_rect(rect),
+        theme::text_input(&mut menu.chat_input)
+            .id(input_id)
+            .frame(false)
+            .hint_text("Chat"),
+    );
+
+    let focus_requested = opened_this_frame || menu.chat_focus_pending;
+    if focus_requested {
+        response.request_focus();
+        menu.chat_focus_pending = false;
+    }
+
+    let enter_pressed = ui.input(|input| input.key_pressed(egui::Key::Enter));
+    let escape_pressed = ui.input(|input| input.key_pressed(egui::Key::Escape));
+
+    if escape_pressed {
+        cancel_chat(menu, &response);
+    } else if !focus_requested && enter_pressed && (response.has_focus() || response.lost_focus()) {
+        submit_chat(menu, runtime, &response);
+    } else if !focus_requested && response.lost_focus() {
+        cancel_chat(menu, &response);
+    }
+}
+
+fn draw_inactive_input(ui: &mut egui::Ui, menu: &mut MenuState) {
+    let rect = allocate_input_rect(ui);
+    paint_input_background(ui, rect);
+    ui.put(
+        input_text_rect(rect),
+        theme::text_input(&mut menu.chat_input)
+            .id(egui::Id::new(CHAT_INPUT_ID))
+            .frame(false)
+            .interactive(false)
+            .hint_text("Chat"),
+    );
+
+    let response = ui.interact(
+        rect,
+        egui::Id::new(CHAT_INPUT_ID).with("inactive"),
+        egui::Sense::click(),
+    );
+    if response.clicked() {
+        menu.chat_open = true;
+        menu.chat_focus_pending = true;
+        menu.chat_input.clear();
+    }
+}
+
+fn allocate_input_rect(ui: &mut egui::Ui) -> egui::Rect {
+    ui.allocate_exact_size(
+        egui::vec2(CHAT_INPUT_WIDTH, CHAT_INPUT_HEIGHT),
+        egui::Sense::hover(),
+    )
+    .0
+}
+
+fn input_text_rect(rect: egui::Rect) -> egui::Rect {
+    rect.shrink2(egui::vec2(10.0, 0.0))
+}
+
+fn paint_input_background(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter().rect(
+        rect,
+        4,
+        egui::Color32::from_rgba_unmultiplied(3, 5, 8, 156),
+        egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(115, 132, 151, 44),
+        ),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn submit_chat(menu: &mut MenuState, runtime: &mut ClientRuntime, response: &egui::Response) {
     let text = std::mem::take(&mut menu.chat_input);
+    menu.chat_open = false;
+    menu.chat_focus_pending = false;
+    response.surrender_focus();
+
     if text.trim().is_empty() {
         return;
     }
 
-    if let Some(session) = runtime.session.as_mut()
-        && let Err(error) = session.send(ClientMessage::Chat { text })
-    {
-        runtime.messages.push(format!("chat send failed: {error}"));
+    if let Some(session) = runtime.session.as_mut() {
+        if let Err(error) = session.send(ClientMessage::Chat { text }) {
+            runtime.push_error_message(format!("chat send failed: {error}"));
+        }
+    } else {
+        runtime.push_error_message("chat send failed: not connected");
     }
+}
+
+fn cancel_chat(menu: &mut MenuState, response: &egui::Response) {
+    menu.chat_open = false;
+    menu.chat_focus_pending = false;
+    menu.chat_input.clear();
+    response.surrender_focus();
 }
