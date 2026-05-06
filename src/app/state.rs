@@ -15,6 +15,10 @@ use crate::{
 pub(crate) enum Screen {
     MainMenu,
     Worlds,
+    #[expect(
+        dead_code,
+        reason = "The multiplayer screen is built but gated behind a coming-soon menu entry."
+    )]
     Multiplayer,
     InGame,
 }
@@ -34,6 +38,7 @@ pub(crate) struct MenuState {
     pub(crate) status: Option<String>,
     pub(crate) pause_open: bool,
     pub(crate) chat_input: String,
+    pub(crate) confirmation: Option<ConfirmationDialog>,
 }
 
 impl Default for MenuState {
@@ -46,8 +51,39 @@ impl Default for MenuState {
             status: None,
             pause_open: false,
             chat_input: String::new(),
+            confirmation: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConfirmationDialog {
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) confirm_label: String,
+    pub(crate) cancel_label: String,
+    pub(crate) action: ConfirmationAction,
+    pub(crate) closing: bool,
+    pub(crate) confirmed: bool,
+}
+
+impl ConfirmationDialog {
+    pub(crate) fn delete_world(world_id: Uuid, world_name: &str) -> Self {
+        Self {
+            title: "Delete World".to_owned(),
+            body: format!("Permanently delete \"{world_name}\"? This cannot be undone."),
+            confirm_label: "Delete".to_owned(),
+            cancel_label: "Cancel".to_owned(),
+            action: ConfirmationAction::DeleteWorld { world_id },
+            closing: false,
+            confirmed: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ConfirmationAction {
+    DeleteWorld { world_id: Uuid },
 }
 
 #[derive(Resource, Default)]

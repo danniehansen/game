@@ -1,6 +1,8 @@
 mod chat;
+mod confirm;
 mod hud;
 mod menu;
+mod modal;
 mod multiplayer;
 mod pause;
 mod theme;
@@ -11,6 +13,7 @@ use bevy_egui::{EguiContexts, egui};
 
 use self::{
     chat::chat_ui,
+    confirm::confirmation_ui,
     hud::hud_ui,
     menu::main_menu_ui,
     multiplayer::multiplayer_ui,
@@ -43,6 +46,8 @@ pub(crate) fn ui_system(
             }
         }
     }
+
+    confirmation_ui(ctx, &mut menu, &store);
 
     Ok(())
 }

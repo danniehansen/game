@@ -53,28 +53,32 @@ pub(super) fn multiplayer_ui(
             theme::inset_frame().show(ui, |ui| {
                 ui.label(theme::field_label("Direct UDP"));
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [320.0, 34.0],
-                        egui::TextEdit::singleline(&mut menu.multiplayer_addr),
-                    );
-                    if theme::compact_button(ui, "Connect", ButtonKind::Primary, 92.0).clicked() {
-                        match menu.multiplayer_addr.parse::<SocketAddr>() {
-                            Ok(addr) => match ClientSession::connect_udp(addr, &user.0) {
-                                Ok(session) => {
-                                    runtime.start_session(session, None);
-                                    menu.screen = Screen::InGame;
-                                    menu.pause_open = false;
-                                    menu.status = None;
-                                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 38.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.add_sized([320.0, 34.0], theme::text_input(&mut menu.multiplayer_addr));
+                        if theme::compact_button(ui, "Connect", ButtonKind::Primary, 92.0).clicked()
+                        {
+                            match menu.multiplayer_addr.parse::<SocketAddr>() {
+                                Ok(addr) => match ClientSession::connect_udp(addr, &user.0) {
+                                    Ok(session) => {
+                                        runtime.start_session(session, None);
+                                        menu.screen = Screen::InGame;
+                                        menu.pause_open = false;
+                                        menu.status = None;
+                                    }
+                                    Err(error) => {
+                                        menu.status = Some(format!("connect failed: {error}"));
+                                    }
+                                },
                                 Err(error) => {
-                                    menu.status = Some(format!("connect failed: {error}"));
+                                    menu.status = Some(format!("invalid address: {error}"))
                                 }
-                            },
-                            Err(error) => menu.status = Some(format!("invalid address: {error}")),
+                            }
                         }
-                    }
-                });
+                    },
+                );
             });
 
             if let Some(status) = &menu.status {

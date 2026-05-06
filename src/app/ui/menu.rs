@@ -1,13 +1,10 @@
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::egui;
 
-use crate::{
-    app::state::{MenuState, SaveStore, Screen, SteamUser},
-    steam::{OfflineSteamBackend, SteamBackend},
-};
+use crate::app::state::{MenuState, SaveStore, Screen, SteamUser};
 
 use super::{
-    danger_menu_button, menu_button, primary_menu_button,
+    danger_menu_button, primary_menu_button,
     theme::{self, MENU_WIDTH},
     worlds::refresh_worlds,
 };
@@ -35,14 +32,13 @@ pub(super) fn main_menu_ui(
                             refresh_worlds(menu, store);
                             menu.screen = Screen::Worlds;
                         }
-                        if menu_button(ui, "Multiplayer").clicked() {
-                            let steam = OfflineSteamBackend;
-                            menu.status = match steam.open_server_browser() {
-                                Ok(()) => Some("opened Steam server browser".to_owned()),
-                                Err(error) => Some(format!("Steam browser unavailable: {error}")),
-                            };
-                            menu.screen = Screen::Multiplayer;
-                        }
+                        let multiplayer =
+                            theme::disabled_game_button(ui, "Multiplayer", MENU_WIDTH - 100.0);
+                        theme::wow_tooltip(
+                            multiplayer,
+                            "Coming soon",
+                            "Multiplayer is not ready yet.",
+                        );
                         if danger_menu_button(ui, "Quit").clicked() {
                             app_exit.write(AppExit::Success);
                         }

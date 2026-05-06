@@ -1,6 +1,8 @@
+use std::hash::Hash;
+
 use bevy_egui::egui::{
-    self, Align2, Button, Color32, CornerRadius, FontFamily, FontId, Frame, Id, Margin, Order,
-    RichText, Stroke, TextStyle, Vec2, vec2,
+    self, Align2, Button, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Id, Margin,
+    Order, RichText, Sense, Stroke, TextEdit, TextStyle, Vec2, vec2,
 };
 
 pub(super) const MENU_WIDTH: f32 = 360.0;
@@ -137,6 +139,28 @@ pub(super) fn game_button(
             .stroke(stroke)
             .corner_radius(4),
     )
+    .on_hover_cursor(CursorIcon::PointingHand)
+}
+
+pub(super) fn disabled_game_button(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 46.0), Sense::hover());
+
+    ui.painter().rect(
+        rect,
+        4,
+        Color32::from_rgba_unmultiplied(28, 32, 38, 210),
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(92, 102, 116, 72)),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::new(14.0, FontFamily::Proportional),
+        muted_text(),
+    );
+
+    response
 }
 
 pub(super) fn compact_button(
@@ -162,6 +186,120 @@ pub(super) fn compact_button(
             .stroke(stroke)
             .corner_radius(4),
     )
+    .on_hover_cursor(CursorIcon::PointingHand)
+}
+
+pub(super) fn compact_button_in_rect(
+    ui: &mut egui::Ui,
+    id_source: impl Hash,
+    rect: egui::Rect,
+    label: &str,
+    kind: ButtonKind,
+) -> egui::Response {
+    let response = ui
+        .interact(rect, ui.id().with(id_source), Sense::click())
+        .on_hover_cursor(CursorIcon::PointingHand);
+    let (fill, stroke, text_color) = button_paint(
+        kind,
+        response.hovered(),
+        response.is_pointer_button_down_on(),
+    );
+
+    ui.painter()
+        .rect(rect, 4, fill, stroke, egui::StrokeKind::Inside);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::new(13.0, FontFamily::Proportional),
+        text_color,
+    );
+
+    response
+}
+
+pub(super) fn text_input(value: &mut String) -> TextEdit<'_> {
+    TextEdit::singleline(value)
+        .vertical_align(egui::Align::Center)
+        .margin(Margin::symmetric(10, 5))
+}
+
+pub(super) fn wow_tooltip(response: egui::Response, title: &str, body: &str) -> egui::Response {
+    if let Some(pointer_position) = response.hover_pos().or_else(|| {
+        response
+            .contains_pointer()
+            .then(|| response.ctx.pointer_hover_pos())
+            .flatten()
+    }) {
+        let tooltip_position = pointer_position + vec2(16.0, 18.0);
+        egui::Area::new(response.id.with("wow_tooltip"))
+            .order(Order::Tooltip)
+            .interactable(false)
+            .fixed_pos(tooltip_position)
+            .show(&response.ctx, |ui| {
+                draw_wow_tooltip(ui, title, body);
+            });
+    }
+
+    response
+}
+
+fn button_paint(kind: ButtonKind, hovered: bool, active: bool) -> (Color32, Stroke, Color32) {
+    match kind {
+        ButtonKind::Primary => {
+            let fill = if active {
+                Color32::from_rgb(24, 67, 118)
+            } else if hovered {
+                Color32::from_rgb(37, 101, 174)
+            } else {
+                accent_dark()
+            };
+            (fill, Stroke::new(1.0, accent()), Color32::WHITE)
+        }
+        ButtonKind::Secondary => {
+            let fill = if active {
+                Color32::from_rgba_unmultiplied(30, 36, 45, 246)
+            } else if hovered {
+                button_hover_fill()
+            } else {
+                button_fill()
+            };
+            (fill, Stroke::new(1.0, button_stroke()), text())
+        }
+        ButtonKind::Danger => {
+            let fill = if active {
+                Color32::from_rgba_unmultiplied(62, 22, 25, 236)
+            } else if hovered {
+                Color32::from_rgba_unmultiplied(94, 36, 40, 238)
+            } else {
+                Color32::from_rgba_unmultiplied(75, 31, 34, 218)
+            };
+            (
+                fill,
+                Stroke::new(1.0, Color32::from_rgb(145, 60, 64)),
+                Color32::from_rgb(255, 224, 224),
+            )
+        }
+    }
+}
+
+fn draw_wow_tooltip(ui: &mut egui::Ui, title: &str, body: &str) {
+    Frame::NONE
+        .fill(Color32::from_rgba_unmultiplied(4, 6, 12, 244))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(78, 112, 174)))
+        .corner_radius(4)
+        .inner_margin(Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_max_width(260.0);
+            ui.label(
+                RichText::new(title)
+                    .size(14.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 214, 105)),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(body).size(13.0).color(text()));
+        });
 }
 
 pub(super) fn title(text_value: &str, size: f32) -> RichText {

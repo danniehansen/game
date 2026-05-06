@@ -4,6 +4,8 @@ use crate::protocol::ClientMessage;
 
 use crate::app::state::{ClientRuntime, MenuState};
 
+use super::theme;
+
 const CHAT_WIDTH: f32 = 390.0;
 
 pub(super) fn chat_ui(ctx: &egui::Context, menu: &mut MenuState, runtime: &mut ClientRuntime) {
@@ -33,10 +35,9 @@ pub(super) fn chat_ui(ctx: &egui::Context, menu: &mut MenuState, runtime: &mut C
 
                     ui.add_space(5.0);
                     let response = ui.add(
-                        egui::TextEdit::singleline(&mut menu.chat_input)
+                        theme::text_input(&mut menu.chat_input)
                             .hint_text("Chat")
-                            .desired_width(CHAT_WIDTH - 20.0)
-                            .margin(egui::Margin::symmetric(8, 5)),
+                            .desired_width(CHAT_WIDTH - 20.0),
                     );
                     if response.lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter))
