@@ -9,6 +9,7 @@ use crate::{
     },
     save::{WorldStore, WorldSummary},
     steam::AuthenticatedUser,
+    world::WorldData,
 };
 
 const MAX_CLIENT_LOG_MESSAGES: usize = 80;
@@ -134,6 +135,7 @@ pub(crate) struct ClientRuntime {
     pub(crate) active_world_id: Option<Uuid>,
     pub(crate) client_id: Option<ClientId>,
     pub(crate) is_admin: bool,
+    pub(crate) world: Option<WorldData>,
     pub(crate) snapshot: Option<WorldSnapshot>,
     pub(crate) predicted_local: Option<PlayerController>,
     pub(crate) messages: Vec<ClientLogEntry>,
@@ -146,6 +148,7 @@ impl ClientRuntime {
         self.active_world_id = world_id;
         self.client_id = None;
         self.is_admin = false;
+        self.world = None;
         self.snapshot = None;
         self.predicted_local = None;
         self.messages.clear();
@@ -163,6 +166,7 @@ impl ClientRuntime {
         self.active_world_id = None;
         self.client_id = None;
         self.snapshot = None;
+        self.world = None;
         self.predicted_local = None;
         self.is_admin = false;
     }
@@ -171,13 +175,15 @@ impl ClientRuntime {
         match message {
             ServerMessage::Welcome {
                 client_id,
+                world,
                 is_admin,
                 snapshot,
                 ..
             } => {
                 self.client_id = Some(client_id);
                 self.is_admin = is_admin;
-                self.sync_prediction_from_snapshot(&snapshot, true);
+                self.world = Some(world);
+                self.seed_local_prediction_from_snapshot(&snapshot, true);
                 self.snapshot = Some(snapshot);
                 self.push_system_message(format!("connected as player {client_id}"));
             }
@@ -188,12 +194,19 @@ impl ClientRuntime {
                 self.push_system_message(format_player_event(event))
             }
             ServerMessage::Snapshot(snapshot) => {
-                self.sync_prediction_from_snapshot(&snapshot, false);
+                if self.is_stale_snapshot(snapshot.tick) {
+                    return;
+                }
+                self.seed_local_prediction_from_snapshot(&snapshot, false);
                 self.snapshot = Some(snapshot);
+            }
+            ServerMessage::Correction(player) => {
+                self.apply_non_movement_correction(&player);
             }
             ServerMessage::Chat(ChatMessage { from, text }) => {
                 self.push_chat_message(from, text);
             }
+            ServerMessage::Heartbeat => {}
         }
     }
 
@@ -244,7 +257,7 @@ impl ClientRuntime {
         })
     }
 
-    fn sync_prediction_from_snapshot(&mut self, snapshot: &WorldSnapshot, force: bool) {
+    fn seed_local_prediction_from_snapshot(&mut self, snapshot: &WorldSnapshot, force: bool) {
         let Some(client_id) = self.client_id else {
             return;
         };
@@ -258,12 +271,24 @@ impl ClientRuntime {
 
         if force || self.predicted_local.is_none() {
             self.predicted_local = Some(PlayerController::from_player_state(server_player));
+            self.input_sequence = self.input_sequence.max(server_player.last_processed_input);
+        }
+    }
+
+    fn apply_non_movement_correction(&mut self, player: &PlayerState) {
+        if Some(player.client_id) != self.client_id {
             return;
         }
 
-        if let Some(predicted) = self.predicted_local.as_mut() {
-            predicted.reconcile(server_player);
+        if let Some(predicted) = &mut self.predicted_local {
+            predicted.health = player.health;
         }
+    }
+
+    fn is_stale_snapshot(&self, tick: u64) -> bool {
+        self.snapshot
+            .as_ref()
+            .is_some_and(|current| tick <= current.tick)
     }
 }
 
@@ -295,5 +320,116 @@ fn format_player_event(event: PlayerEvent) -> String {
     match event {
         PlayerEvent::Joined { name, .. } => format!("{name} joined"),
         PlayerEvent::Left { name, .. } => format!("{name} left"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{MAX_HEALTH, MAX_STAMINA};
+
+    fn player_state(client_id: ClientId, position: Vec3Net) -> PlayerState {
+        PlayerState {
+            client_id,
+            steam_id: client_id,
+            name: format!("Player {client_id}"),
+            position,
+            velocity: Vec3Net::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            health: MAX_HEALTH,
+            stamina: MAX_STAMINA,
+            grounded: true,
+            last_processed_input: 0,
+            is_admin: false,
+        }
+    }
+
+    #[test]
+    fn welcome_seeds_local_prediction_from_snapshot() {
+        let mut server_player = player_state(1, Vec3Net::new(2.0, 0.0, 0.0));
+        server_player.last_processed_input = 7;
+        let mut runtime = ClientRuntime {
+            client_id: Some(1),
+            ..default()
+        };
+
+        runtime.seed_local_prediction_from_snapshot(
+            &WorldSnapshot {
+                tick: 1,
+                players: vec![server_player],
+            },
+            true,
+        );
+
+        let predicted = runtime.predicted_local.expect("prediction should exist");
+        assert_eq!(predicted.position, Vec3Net::new(2.0, 0.0, 0.0));
+        assert_eq!(runtime.input_sequence, 7);
+    }
+
+    #[test]
+    fn snapshots_do_not_reconcile_existing_local_prediction() {
+        let mut runtime = ClientRuntime {
+            client_id: Some(1),
+            predicted_local: Some(PlayerController::from_player_state(&player_state(
+                1,
+                Vec3Net::new(5.0, 0.0, 0.0),
+            ))),
+            ..default()
+        };
+
+        runtime.apply_message(ServerMessage::Snapshot(WorldSnapshot {
+            tick: 1,
+            players: vec![player_state(1, Vec3Net::ZERO)],
+        }));
+
+        let predicted = runtime.predicted_local.expect("prediction should exist");
+        assert_eq!(predicted.position, Vec3Net::new(5.0, 0.0, 0.0));
+        assert_eq!(runtime.snapshot.expect("snapshot should exist").tick, 1);
+    }
+
+    #[test]
+    fn stale_snapshots_are_ignored() {
+        let current_snapshot = WorldSnapshot {
+            tick: 5,
+            players: vec![player_state(1, Vec3Net::new(5.0, 0.0, 0.0))],
+        };
+        let mut runtime = ClientRuntime {
+            client_id: Some(1),
+            snapshot: Some(current_snapshot.clone()),
+            predicted_local: Some(PlayerController::from_player_state(
+                &current_snapshot.players[0],
+            )),
+            ..default()
+        };
+
+        runtime.apply_message(ServerMessage::Snapshot(WorldSnapshot {
+            tick: 4,
+            players: vec![player_state(1, Vec3Net::ZERO)],
+        }));
+
+        let predicted = runtime.predicted_local.expect("prediction should exist");
+        assert_eq!(predicted.position, Vec3Net::new(5.0, 0.0, 0.0));
+        assert_eq!(runtime.snapshot.expect("snapshot should exist").tick, 5);
+    }
+
+    #[test]
+    fn correction_updates_health_without_realigning_local_prediction() {
+        let mut correction = player_state(1, Vec3Net::ZERO);
+        correction.health = 42.0;
+        let mut runtime = ClientRuntime {
+            client_id: Some(1),
+            predicted_local: Some(PlayerController::from_player_state(&player_state(
+                1,
+                Vec3Net::new(5.0, 0.0, 0.0),
+            ))),
+            ..default()
+        };
+
+        runtime.apply_message(ServerMessage::Correction(correction));
+
+        let predicted = runtime.predicted_local.expect("prediction should exist");
+        assert_eq!(predicted.position, Vec3Net::new(5.0, 0.0, 0.0));
+        assert_eq!(predicted.health, 42.0);
     }
 }

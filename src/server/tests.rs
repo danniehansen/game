@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
-    controller::JUMP_STAMINA_COST,
-    protocol::{ChatMessage, ClientMessage, MAX_STAMINA, PROTOCOL_VERSION, PlayerInput, Vec3Net},
+    protocol::{
+        ChatMessage, ClientMessage, MAX_STAMINA, PROTOCOL_VERSION, PlayerMovement, Vec3Net,
+    },
     save::WorldSave,
     steam::offline_auth_token,
 };
@@ -14,6 +15,18 @@ fn server() -> GameServer {
             singleplayer_host: Some(1),
         },
     )
+}
+
+fn movement(sequence: u64, position: Vec3Net) -> PlayerMovement {
+    PlayerMovement {
+        sequence,
+        position,
+        velocity: Vec3Net::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        stamina: MAX_STAMINA,
+        grounded: true,
+    }
 }
 
 #[test]
@@ -96,7 +109,7 @@ fn empty_chat_is_ignored_by_server() {
 }
 
 #[test]
-fn movement_is_authoritative_on_tick() {
+fn movement_state_is_accepted_by_server() {
     let mut server = server();
     let (client_id, _) = server
         .connect(
@@ -109,25 +122,16 @@ fn movement_is_authoritative_on_tick() {
 
     server.receive(
         client_id,
-        ClientMessage::Input(PlayerInput {
-            sequence: 1,
-            direction: Vec3Net::new(1.0, 0.0, 0.0),
-            sprint: false,
-            jump: false,
-            yaw: 0.0,
-            pitch: 0.0,
-        }),
+        ClientMessage::Movement(movement(1, Vec3Net::new(1.25, 0.0, 0.0))),
     );
-    for _ in 0..10 {
-        server.tick(0.05);
-    }
 
     let snapshot = server.snapshot();
-    assert!(snapshot.players[0].position.x > 1.0);
+    assert_eq!(snapshot.players[0].position, Vec3Net::new(1.25, 0.0, 0.0));
+    assert_eq!(snapshot.players[0].last_processed_input, 1);
 }
 
 #[test]
-fn jump_consumes_stamina_and_is_networked() {
+fn stale_movement_sequence_is_ignored_by_server() {
     let mut server = server();
     let (client_id, _) = server
         .connect(
@@ -140,93 +144,59 @@ fn jump_consumes_stamina_and_is_networked() {
 
     server.receive(
         client_id,
-        ClientMessage::Input(PlayerInput {
-            sequence: 1,
-            direction: Vec3Net::ZERO,
-            sprint: false,
-            jump: true,
-            yaw: 0.0,
-            pitch: 0.0,
-        }),
+        ClientMessage::Movement(movement(2, Vec3Net::new(1.0, 0.0, 0.0))),
     );
-    server.tick(0.05);
+    server.receive(
+        client_id,
+        ClientMessage::Movement(movement(1, Vec3Net::new(-1.0, 0.0, 0.0))),
+    );
+
+    let player = &server.snapshot().players[0];
+    assert!(player.position.x > 0.0);
+    assert_eq!(player.last_processed_input, 2);
+}
+
+#[test]
+fn non_finite_movement_is_ignored_by_server() {
+    let mut server = server();
+    let (client_id, _) = server
+        .connect(
+            PROTOCOL_VERSION,
+            1,
+            "Host".to_owned(),
+            offline_auth_token(1),
+        )
+        .expect("host should connect");
+
+    let mut bad_movement = movement(1, Vec3Net::new(f32::NAN, 0.0, 0.0));
+    bad_movement.velocity = Vec3Net::new(1.0, 0.0, 0.0);
+    server.receive(client_id, ClientMessage::Movement(bad_movement));
+
+    let player = &server.snapshot().players[0];
+    assert!(player.position.x.is_finite());
+    assert_eq!(player.last_processed_input, 0);
+}
+
+#[test]
+fn airborne_movement_state_is_networked() {
+    let mut server = server();
+    let (client_id, _) = server
+        .connect(
+            PROTOCOL_VERSION,
+            1,
+            "Host".to_owned(),
+            offline_auth_token(1),
+        )
+        .expect("host should connect");
+
+    let mut jump_movement = movement(1, Vec3Net::new(0.0, 0.2, 0.0));
+    jump_movement.velocity = Vec3Net::new(0.0, 4.0, 0.0);
+    jump_movement.stamina = MAX_STAMINA - 22.0;
+    jump_movement.grounded = false;
+    server.receive(client_id, ClientMessage::Movement(jump_movement));
 
     let player = &server.snapshot().players[0];
     assert!(player.position.y > 0.0);
     assert!(player.stamina < MAX_STAMINA);
     assert!(!player.grounded);
-}
-
-#[test]
-fn jump_request_survives_following_non_jump_input_before_tick() {
-    let mut server = server();
-    let (client_id, _) = server
-        .connect(
-            PROTOCOL_VERSION,
-            1,
-            "Host".to_owned(),
-            offline_auth_token(1),
-        )
-        .expect("host should connect");
-
-    server.receive(
-        client_id,
-        ClientMessage::Input(PlayerInput {
-            sequence: 1,
-            direction: Vec3Net::ZERO,
-            sprint: false,
-            jump: true,
-            yaw: 0.0,
-            pitch: 0.0,
-        }),
-    );
-    server.receive(
-        client_id,
-        ClientMessage::Input(PlayerInput {
-            sequence: 2,
-            direction: Vec3Net::new(0.0, 0.0, 1.0),
-            sprint: true,
-            jump: false,
-            yaw: 0.0,
-            pitch: 0.0,
-        }),
-    );
-    server.tick(0.05);
-
-    let player = &server.snapshot().players[0];
-    assert!(player.position.y > 0.0);
-    assert!(!player.grounded);
-}
-
-#[test]
-fn sprint_does_not_spend_stamina_before_jump_request() {
-    let mut server = server();
-    let (client_id, _) = server
-        .connect(
-            PROTOCOL_VERSION,
-            1,
-            "Host".to_owned(),
-            offline_auth_token(1),
-        )
-        .expect("host should connect");
-
-    let client = server.clients.get_mut(&client_id).expect("client exists");
-    client.controller.stamina = JUMP_STAMINA_COST + 0.1;
-
-    server.receive(
-        client_id,
-        ClientMessage::Input(PlayerInput {
-            sequence: 1,
-            direction: Vec3Net::new(0.0, 0.0, 1.0),
-            sprint: true,
-            jump: true,
-            yaw: 0.0,
-            pitch: 0.0,
-        }),
-    );
-    server.tick(0.05);
-
-    let player = &server.snapshot().players[0];
-    assert!(player.position.y > 0.0);
-    assert!(player.stamina <= 0.1);
 }

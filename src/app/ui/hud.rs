@@ -1,3 +1,4 @@
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::egui;
 
 use crate::{
@@ -10,8 +11,12 @@ use super::theme;
 const HUD_WIDTH: f32 = 255.0;
 const BAR_WIDTH: f32 = 215.0;
 const BAR_HEIGHT: f32 = 13.0;
+const FPS_COUNTER_WIDTH: f32 = 58.0;
+const FPS_COUNTER_HEIGHT: f32 = 16.0;
 
-pub(super) fn hud_ui(ctx: &egui::Context, runtime: &ClientRuntime) {
+pub(super) fn hud_ui(ctx: &egui::Context, runtime: &ClientRuntime, diagnostics: &DiagnosticsStore) {
+    fps_ui(ctx, diagnostics);
+
     let Some(player) = runtime.local_view() else {
         return;
     };
@@ -43,6 +48,39 @@ pub(super) fn hud_ui(ctx: &egui::Context, runtime: &ClientRuntime) {
                         player.stamina,
                         MAX_STAMINA,
                         egui::Color32::from_rgb(61, 159, 104),
+                    );
+                });
+        });
+}
+
+fn fps_ui(ctx: &egui::Context, diagnostics: &DiagnosticsStore) {
+    let fps = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diagnostic| diagnostic.smoothed())
+        .unwrap_or_default();
+
+    egui::Area::new("fps_counter".into())
+        .anchor(egui::Align2::RIGHT_TOP, [-16.0, 14.0])
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(egui::Color32::from_rgba_unmultiplied(6, 9, 13, 150))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(115, 132, 151, 60),
+                ))
+                .corner_radius(5)
+                .inner_margin(egui::Margin::symmetric(9, 5))
+                .show(ui, |ui| {
+                    ui.set_min_size(egui::vec2(FPS_COUNTER_WIDTH, FPS_COUNTER_HEIGHT));
+                    ui.add_sized(
+                        [FPS_COUNTER_WIDTH, FPS_COUNTER_HEIGHT],
+                        egui::Label::new(
+                            egui::RichText::new(format!("{fps:.0} FPS"))
+                                .monospace()
+                                .size(12.0)
+                                .color(theme::muted_text()),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
                     );
                 });
         });

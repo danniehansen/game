@@ -8,6 +8,7 @@ mod pause;
 mod theme;
 mod worlds;
 
+use bevy::diagnostic::DiagnosticsStore;
 use bevy::{app::AppExit, prelude::*};
 use bevy_egui::{EguiContexts, egui};
 
@@ -29,6 +30,7 @@ pub(crate) fn ui_system(
     mut runtime: ResMut<ClientRuntime>,
     store: Res<SaveStore>,
     user: Res<SteamUser>,
+    diagnostics: Res<DiagnosticsStore>,
     mut app_exit: MessageWriter<AppExit>,
 ) -> bevy::prelude::Result {
     let ctx = contexts.ctx_mut()?;
@@ -39,7 +41,7 @@ pub(crate) fn ui_system(
         Screen::Worlds => worlds_ui(ctx, &mut menu, &mut runtime, &store, &user),
         Screen::Multiplayer => multiplayer_ui(ctx, &mut menu, &mut runtime, &user),
         Screen::InGame => {
-            hud_ui(ctx, &runtime);
+            hud_ui(ctx, &runtime, &diagnostics);
             chat_ui(ctx, &mut menu, &mut runtime);
             if menu.pause_open {
                 pause_ui(ctx, &mut menu, &mut runtime, &store);

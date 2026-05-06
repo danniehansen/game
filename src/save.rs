@@ -9,7 +9,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::protocol::SteamId;
+use crate::{protocol::SteamId, world::WorldData};
 
 const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "Game";
@@ -121,6 +121,8 @@ pub struct WorldSave {
     pub seed: u64,
     pub created_at_unix: u64,
     pub admins: Vec<SteamId>,
+    #[serde(default)]
+    pub world: WorldData,
     pub state: WorldStateSave,
 }
 
@@ -138,6 +140,7 @@ impl WorldSave {
             seed: seed_from_uuid(id),
             created_at_unix: now_unix(),
             admins,
+            world: WorldData::default(),
             state: WorldStateSave::default(),
         }
     }
@@ -209,6 +212,7 @@ mod tests {
 
         assert_eq!(save.name, "Test World");
         assert_eq!(save.admins, vec![123]);
+        assert!(!save.world.blocks.is_empty());
 
         let loaded = store.load_world(save.id).expect("world should load");
         assert_eq!(loaded.id, save.id);

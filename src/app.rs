@@ -4,7 +4,7 @@ mod systems;
 mod ui;
 
 use anyhow::Result;
-use bevy::prelude::*;
+use bevy::{diagnostic::FrameTimeDiagnosticsPlugin, prelude::*};
 use bevy_egui::{
     EguiPlugin, EguiPrimaryContextPass,
     input::{egui_wants_any_keyboard_input, egui_wants_any_pointer_input},
@@ -16,7 +16,7 @@ use crate::{
 };
 
 use self::{
-    scene::setup_scene,
+    scene::{apply_world_scene_system, setup_scene},
     state::{ClientRuntime, LookState, MenuState, SaveStore, SteamUser},
     systems::{
         apply_snapshot_system, camera_follow_system, chat_shortcut_system, client_input_system,
@@ -52,6 +52,7 @@ pub fn run_app() -> Result<()> {
             }),
             ..default()
         }))
+        .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .add_systems(Startup, setup_scene)
         .add_systems(EguiPrimaryContextPass, ui_system)
@@ -74,14 +75,20 @@ pub fn run_app() -> Result<()> {
         )
         .add_systems(
             Update,
-            client_input_system.run_if(not(egui_wants_any_keyboard_input)),
+            client_input_system
+                .run_if(not(egui_wants_any_keyboard_input))
+                .after(mouse_look_system),
         )
-        .add_systems(Update, network_tick_system)
+        .add_systems(Update, network_tick_system.after(client_input_system))
+        .add_systems(Update, apply_world_scene_system)
         .add_systems(Update, apply_snapshot_system)
         .add_systems(Update, interpolate_players_system)
         .add_systems(
             Update,
-            camera_follow_system.run_if(not(egui_wants_any_pointer_input)),
+            camera_follow_system
+                .run_if(not(egui_wants_any_pointer_input))
+                .after(client_input_system)
+                .after(mouse_look_system),
         )
         .run();
 

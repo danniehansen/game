@@ -1,12 +1,15 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    f32::consts::{PI, TAU},
+};
 
 use anyhow::{Result, bail};
 
 use crate::{
-    controller::PlayerController,
+    controller::{MAX_LOOK_PITCH, PlayerController},
     protocol::{
-        ChatMessage, ClientId, ClientMessage, PROTOCOL_VERSION, PlayerEvent, PlayerState,
-        ServerMessage, SteamId, WorldSnapshot, sanitize_chat,
+        ChatMessage, ClientId, ClientMessage, MAX_STAMINA, PROTOCOL_VERSION, PlayerEvent,
+        PlayerMovement, PlayerState, ServerMessage, SteamId, Vec3Net, WorldSnapshot, sanitize_chat,
     },
     save::WorldSave,
     steam::{AuthMode, verify_auth_ticket},
@@ -110,6 +113,7 @@ impl GameServer {
                     message: ServerMessage::Welcome {
                         client_id,
                         world_seed: self.save.seed,
+                        world: self.save.world.clone(),
                         is_admin,
                         snapshot,
                     },
@@ -130,9 +134,9 @@ impl GameServer {
                     reason: "client is already authenticated".to_owned(),
                 },
             }],
-            ClientMessage::Input(input) => {
+            ClientMessage::Movement(movement) => {
                 if let Some(client) = self.clients.get_mut(&client_id) {
-                    client.controller.apply_input(input);
+                    apply_client_movement(&mut client.controller, movement);
                 }
                 Vec::new()
             }
@@ -148,6 +152,7 @@ impl GameServer {
                 })
                 .into_iter()
                 .collect(),
+            ClientMessage::Heartbeat => Vec::new(),
             ClientMessage::Disconnect => self.disconnect(client_id),
         }
     }
@@ -167,13 +172,9 @@ impl GameServer {
         }]
     }
 
-    pub fn tick(&mut self, delta_seconds: f32) -> Vec<ServerEnvelope> {
+    pub fn tick(&mut self, _delta_seconds: f32) -> Vec<ServerEnvelope> {
         self.tick += 1;
         self.save.state.last_authoritative_tick = self.tick;
-
-        for client in self.clients.values_mut() {
-            client.controller.simulate(delta_seconds);
-        }
 
         vec![ServerEnvelope {
             target: DeliveryTarget::Broadcast,
@@ -220,6 +221,36 @@ struct ServerClient {
     name: String,
     controller: PlayerController,
     is_admin: bool,
+}
+
+fn apply_client_movement(controller: &mut PlayerController, movement: PlayerMovement) {
+    if movement.sequence <= controller.last_processed_input || !movement_is_finite(movement) {
+        return;
+    }
+
+    controller.position = movement.position;
+    controller.velocity = movement.velocity;
+    controller.yaw = normalize_yaw(movement.yaw);
+    controller.pitch = movement.pitch.clamp(-MAX_LOOK_PITCH, MAX_LOOK_PITCH);
+    controller.stamina = movement.stamina.clamp(0.0, MAX_STAMINA);
+    controller.grounded = movement.grounded;
+    controller.last_processed_input = movement.sequence;
+}
+
+fn movement_is_finite(movement: PlayerMovement) -> bool {
+    vec3_is_finite(movement.position)
+        && vec3_is_finite(movement.velocity)
+        && movement.yaw.is_finite()
+        && movement.pitch.is_finite()
+        && movement.stamina.is_finite()
+}
+
+fn vec3_is_finite(value: Vec3Net) -> bool {
+    value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
+}
+
+fn normalize_yaw(yaw: f32) -> f32 {
+    (yaw + PI).rem_euclid(TAU) - PI
 }
 
 fn clean_player_name(name: &str, fallback_id: ClientId) -> String {

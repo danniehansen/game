@@ -1,6 +1,6 @@
 use crate::{
     protocol::Vec3Net,
-    world::{TEST_WORLD_BLOCKS, WorldBlock},
+    world::{WorldBlock, WorldData},
 };
 
 use super::{GROUND_EPSILON, PLAYER_HEIGHT, PLAYER_RADIUS};
@@ -15,6 +15,7 @@ pub(super) enum Axis {
 pub(super) fn move_with_collisions(
     position: &mut Vec3Net,
     velocity: &mut Vec3Net,
+    world: &WorldData,
     axis: Axis,
     delta: f32,
 ) -> bool {
@@ -35,8 +36,8 @@ pub(super) fn move_with_collisions(
         landed = delta < 0.0;
     }
 
-    for block in TEST_WORLD_BLOCKS {
-        if !player_overlaps_block(*position, block) {
+    for block in &world.blocks {
+        if !player_overlaps_block(*position, *block) {
             continue;
         }
 
@@ -85,12 +86,12 @@ fn player_overlaps_block(position: Vec3Net, block: WorldBlock) -> bool {
         && position.z - PLAYER_RADIUS < max.z
 }
 
-pub(super) fn is_supported(position: Vec3Net) -> bool {
+pub(super) fn is_supported(position: Vec3Net, world: &WorldData) -> bool {
     if position.y <= GROUND_EPSILON {
         return true;
     }
 
-    TEST_WORLD_BLOCKS.iter().any(|block| {
+    world.blocks.iter().any(|block| {
         let min = block.min();
         let max = block.max();
         (position.y - max.y).abs() <= GROUND_EPSILON

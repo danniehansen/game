@@ -1,11 +1,15 @@
 mod collision;
 
-use crate::protocol::{MAX_HEALTH, MAX_STAMINA, PlayerInput, PlayerState, Vec3Net};
+use crate::{
+    protocol::{MAX_HEALTH, MAX_STAMINA, PlayerInput, PlayerState, Vec3Net},
+    world::WorldData,
+};
 
 use self::collision::{Axis, is_supported, move_with_collisions};
 
 pub const WALK_SPEED: f32 = 5.2;
 pub const SPRINT_SPEED: f32 = 8.4;
+pub const MAX_LOOK_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 const GROUND_ACCELERATION: f32 = 52.0;
 const AIR_ACCELERATION: f32 = 18.0;
 const GRAVITY: f32 = 18.0;
@@ -21,6 +25,7 @@ const JUMP_BUFFER_SECONDS: f32 = 0.18;
 const COYOTE_TIME_SECONDS: f32 = 0.1;
 const GROUND_EPSILON: f32 = 0.04;
 const MAX_SIMULATION_DELTA: f32 = 0.1;
+const MAX_SIMULATION_STEP: f32 = 1.0 / 120.0;
 
 #[derive(Debug, Clone)]
 pub struct PlayerController {
@@ -51,6 +56,7 @@ impl PlayerController {
             last_processed_input: 0,
             last_input: PlayerInput {
                 sequence: 0,
+                delta_seconds: 0.0,
                 direction: Vec3Net::ZERO,
                 sprint: false,
                 jump: false,
@@ -79,31 +85,56 @@ impl PlayerController {
         controller
     }
 
-    pub fn apply_input(&mut self, mut input: PlayerInput) {
-        if input.sequence < self.last_processed_input {
+    pub fn apply_input(&mut self, input: PlayerInput) {
+        if input.sequence <= self.last_processed_input {
             return;
         }
 
+        self.start_input(input);
+        self.last_processed_input = input.sequence;
+    }
+
+    pub fn start_authoritative_input(&mut self, input: PlayerInput) {
+        if input.sequence <= self.last_processed_input {
+            return;
+        }
+
+        self.start_input(input);
+    }
+
+    pub fn complete_authoritative_input(&mut self, sequence: u64) {
+        self.last_processed_input = self.last_processed_input.max(sequence);
+    }
+
+    fn start_input(&mut self, mut input: PlayerInput) {
         if input.jump {
             self.jump_buffer_timer = JUMP_BUFFER_SECONDS;
             input.jump = false;
         }
 
-        self.last_processed_input = input.sequence;
         self.last_input = input;
     }
 
-    pub fn simulate(&mut self, delta_seconds: f32) {
-        let delta_seconds = delta_seconds.clamp(0.0, MAX_SIMULATION_DELTA);
+    pub fn simulate(&mut self, delta_seconds: f32, world: &WorldData) {
+        let mut remaining = if delta_seconds.is_finite() {
+            delta_seconds.clamp(0.0, MAX_SIMULATION_DELTA)
+        } else {
+            0.0
+        };
 
+        while remaining > 0.0 {
+            let step = remaining.min(MAX_SIMULATION_STEP);
+            self.simulate_step(step, world);
+            remaining -= step;
+        }
+    }
+
+    fn simulate_step(&mut self, delta_seconds: f32, world: &WorldData) {
         self.yaw = self.last_input.yaw;
-        self.pitch = self.last_input.pitch.clamp(
-            -std::f32::consts::FRAC_PI_2 + 0.01,
-            std::f32::consts::FRAC_PI_2 - 0.01,
-        );
+        self.pitch = self.last_input.pitch.clamp(-MAX_LOOK_PITCH, MAX_LOOK_PITCH);
         self.health = self.health.clamp(0.0, MAX_HEALTH);
 
-        self.grounded = is_supported(self.position);
+        self.grounded = is_supported(self.position, world);
         if self.grounded {
             self.coyote_timer = COYOTE_TIME_SECONDS;
         } else {
@@ -160,11 +191,23 @@ impl PlayerController {
         self.velocity.z = approach(self.velocity.z, target_velocity.z, max_delta);
 
         let x_delta = self.velocity.x * delta_seconds;
-        move_with_collisions(&mut self.position, &mut self.velocity, Axis::X, x_delta);
+        move_with_collisions(
+            &mut self.position,
+            &mut self.velocity,
+            world,
+            Axis::X,
+            x_delta,
+        );
         let z_delta = self.velocity.z * delta_seconds;
-        move_with_collisions(&mut self.position, &mut self.velocity, Axis::Z, z_delta);
+        move_with_collisions(
+            &mut self.position,
+            &mut self.velocity,
+            world,
+            Axis::Z,
+            z_delta,
+        );
 
-        if self.grounded && !is_supported(self.position) {
+        if self.grounded && !is_supported(self.position, world) {
             self.grounded = false;
         }
 
@@ -175,13 +218,18 @@ impl PlayerController {
         }
 
         let y_delta = self.velocity.y * delta_seconds;
-        let landed = move_with_collisions(&mut self.position, &mut self.velocity, Axis::Y, y_delta);
-        self.grounded = landed || is_supported(self.position);
+        let landed = move_with_collisions(
+            &mut self.position,
+            &mut self.velocity,
+            world,
+            Axis::Y,
+            y_delta,
+        );
+        self.grounded = landed || is_supported(self.position, world);
     }
 
     pub fn reconcile(&mut self, server: &PlayerState) -> Reconciliation {
         const SNAP_DISTANCE_SQ: f32 = 1.0;
-        const SOFT_DISTANCE_SQ: f32 = 0.04;
 
         let server_delta = Vec3Net::new(
             server.position.x - self.position.x,
@@ -204,11 +252,6 @@ impl PlayerController {
             self.grounded = server.grounded;
             self.last_processed_input = self.last_processed_input.max(server.last_processed_input);
             Reconciliation::Snap
-        } else if distance_sq > SOFT_DISTANCE_SQ {
-            self.position = self.position.plus(server_delta.scale(0.15));
-            self.velocity = self.velocity.scale(0.9).plus(server.velocity.scale(0.1));
-            self.grounded = self.grounded || server.grounded;
-            Reconciliation::SoftCorrect
         } else {
             Reconciliation::Accepted
         }
@@ -223,7 +266,6 @@ impl PlayerController {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reconciliation {
     Accepted,
-    SoftCorrect,
     Snap,
 }
 
@@ -254,6 +296,10 @@ fn approach(current: f32, target: f32, max_delta: f32) -> f32 {
 mod tests {
     use super::*;
 
+    fn test_world() -> WorldData {
+        WorldData::test_world()
+    }
+
     #[test]
     fn movement_direction_matches_bevy_camera_yaw() {
         let forward = first_person_move_direction(Vec3Net::new(0.0, 0.0, 1.0), 0.0);
@@ -276,6 +322,7 @@ mod tests {
         let mut controller = PlayerController::spawn();
         controller.apply_input(PlayerInput {
             sequence: 1,
+            delta_seconds: 0.05,
             direction: Vec3Net::ZERO,
             sprint: false,
             jump: true,
@@ -284,13 +331,14 @@ mod tests {
         });
         controller.apply_input(PlayerInput {
             sequence: 2,
+            delta_seconds: 0.05,
             direction: Vec3Net::new(0.0, 0.0, 1.0),
             sprint: true,
             jump: false,
             yaw: 0.0,
             pitch: 0.0,
         });
-        controller.simulate(0.05);
+        controller.simulate(0.05, &test_world());
 
         assert!(controller.position.y > 0.0);
         assert!(!controller.grounded);
@@ -302,15 +350,46 @@ mod tests {
         controller.stamina = JUMP_STAMINA_COST + 0.1;
         controller.apply_input(PlayerInput {
             sequence: 1,
+            delta_seconds: 0.05,
             direction: Vec3Net::new(0.0, 0.0, 1.0),
             sprint: true,
             jump: true,
             yaw: 0.0,
             pitch: 0.0,
         });
-        controller.simulate(0.05);
+        controller.simulate(0.05, &test_world());
 
         assert!(controller.position.y > 0.0);
         assert!(controller.stamina <= 0.1);
+    }
+
+    #[test]
+    fn reconciliation_keeps_local_prediction_until_snap_threshold() {
+        let mut controller = PlayerController::spawn();
+        controller.position = Vec3Net::new(0.6, 0.0, 0.0);
+        controller.velocity = Vec3Net::new(5.0, 0.0, 0.0);
+
+        let mut server = PlayerState {
+            client_id: 1,
+            steam_id: 1,
+            name: "Player".to_owned(),
+            position: Vec3Net::ZERO,
+            velocity: Vec3Net::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            health: MAX_HEALTH,
+            stamina: MAX_STAMINA,
+            grounded: true,
+            last_processed_input: 1,
+            is_admin: false,
+        };
+
+        assert_eq!(controller.reconcile(&server), Reconciliation::Accepted);
+        assert_eq!(controller.position, Vec3Net::new(0.6, 0.0, 0.0));
+        assert_eq!(controller.velocity, Vec3Net::new(5.0, 0.0, 0.0));
+
+        server.position = Vec3Net::new(2.0, 0.0, 0.0);
+        assert_eq!(controller.reconcile(&server), Reconciliation::Snap);
+        assert_eq!(controller.position, server.position);
     }
 }
