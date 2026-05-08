@@ -1,7 +1,8 @@
 use std::hash::Hash;
 
 use bevy_egui::egui::{
-    self, Align2, Button, Color32, CursorIcon, FontFamily, FontId, RichText, Sense, Stroke, Vec2,
+    self, Align2, Button, Color32, CursorIcon, FontFamily, FontId, Id, RichText, Sense, Stroke,
+    Vec2,
 };
 
 use super::{accent, accent_dark, button_fill, button_hover_fill, button_stroke, muted_text, text};
@@ -24,6 +25,12 @@ enum ButtonInteraction {
     Rest,
     Hovered,
     Active,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app::ui) enum ButtonSound {
+    Hover,
+    Click,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +124,15 @@ pub(in crate::app::ui) fn compact_button_in_rect(
         text_color,
     );
 
+    record_button_sounds(ui, &response);
     response
+}
+
+pub(in crate::app::ui) fn take_button_sounds(ctx: &egui::Context) -> Vec<ButtonSound> {
+    ctx.data_mut(|data| {
+        data.remove_temp::<Vec<ButtonSound>>(button_sound_queue_id())
+            .unwrap_or_default()
+    })
 }
 
 fn sized_button(
@@ -134,14 +149,52 @@ fn sized_button(
         label = label.strong();
     }
 
-    ui.add(
-        Button::new(label)
-            .min_size(Vec2::new(width, spec.height))
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(4),
-    )
-    .on_hover_cursor(CursorIcon::PointingHand)
+    let response = ui
+        .add(
+            Button::new(label)
+                .min_size(Vec2::new(width, spec.height))
+                .fill(fill)
+                .stroke(stroke)
+                .corner_radius(4),
+        )
+        .on_hover_cursor(CursorIcon::PointingHand);
+
+    record_button_sounds(ui, &response);
+    response
+}
+
+fn record_button_sounds(ui: &mut egui::Ui, response: &egui::Response) {
+    if response.clicked() {
+        queue_button_sound(ui, ButtonSound::Click);
+    }
+
+    let hovered = response.hovered();
+    let hover_state_id = response.id.with("hover_sound");
+    let was_hovered = ui.data_mut(|data| {
+        let was_hovered = data.get_persisted::<bool>(hover_state_id).unwrap_or(false);
+        data.insert_persisted(hover_state_id, hovered);
+        was_hovered
+    });
+    if hover_sound_entered(was_hovered, hovered) {
+        queue_button_sound(ui, ButtonSound::Hover);
+    }
+}
+
+fn queue_button_sound(ui: &egui::Ui, sound: ButtonSound) {
+    ui.ctx().data_mut(|data| {
+        let id = button_sound_queue_id();
+        let mut sounds = data.get_temp::<Vec<ButtonSound>>(id).unwrap_or_default();
+        sounds.push(sound);
+        data.insert_temp(id, sounds);
+    });
+}
+
+fn button_sound_queue_id() -> Id {
+    Id::new("button_sound_queue")
+}
+
+fn hover_sound_entered(was_hovered: bool, hovered: bool) -> bool {
+    hovered && !was_hovered
 }
 
 fn button_interaction(response: &egui::Response) -> ButtonInteraction {
@@ -261,5 +314,13 @@ mod tests {
         assert_eq!(fill, Color32::from_rgba_unmultiplied(92, 35, 38, 224));
         assert_eq!(stroke.color, Color32::from_rgb(165, 72, 76));
         assert_eq!(text_color, Color32::from_rgb(255, 224, 224));
+    }
+
+    #[test]
+    fn hover_sound_only_triggers_on_hover_entry() {
+        assert!(hover_sound_entered(false, true));
+        assert!(!hover_sound_entered(true, true));
+        assert!(!hover_sound_entered(false, false));
+        assert!(!hover_sound_entered(true, false));
     }
 }

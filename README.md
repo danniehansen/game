@@ -18,6 +18,7 @@ Rust/Bevy first-person game prototype with local singleplayer, JSON world saves,
 - Movement: shared first-person controller with collision, jump buffering, coyote time.
 - Client networking: playable client sessions are local-only while the Lightyear client path is still being wired.
 - Worlds: platform-local JSON saves backed by generated world data.
+- Audio: runtime audio uses WAV assets for reliable Bevy/rodio playback; main-menu ambience loops until a world loads, and egui buttons emit click/hover one-shots.
 - Steam: offline dev backend now; `steam` feature is the transport integration hook.
 
 See `CLAUDE.md` for AI context.
