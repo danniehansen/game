@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 
-use super::super::state::MenuState;
+use super::super::state::{ClientSettings, MenuState};
 
 const MAIN_MENU_MUSIC_PATH: &str = "main-screen/ambient-music.wav";
 const MAIN_MENU_MUSIC_VOLUME_DECIBELS: f32 = -24.0;
@@ -32,6 +32,7 @@ pub(crate) fn main_menu_music_system(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     menu: Res<MenuState>,
+    settings: Res<ClientSettings>,
     time: Option<Res<Time>>,
     mut music: MainMenuMusicQuery,
 ) {
@@ -41,7 +42,7 @@ pub(crate) fn main_menu_music_system(
                 Name::new("Main Menu Music"),
                 MainMenuMusic,
                 AudioPlayer::new(asset_server.load(MAIN_MENU_MUSIC_PATH)),
-                PlaybackSettings::LOOP.with_volume(main_menu_music_volume()),
+                PlaybackSettings::LOOP.with_volume(main_menu_music_volume(&settings)),
             ));
         }
 
@@ -50,7 +51,7 @@ pub(crate) fn main_menu_music_system(
                 commands.entity(entity).remove::<MainMenuMusicFadeOut>();
             }
             if let Some(mut sink) = sink {
-                sink.set_volume(main_menu_music_volume());
+                sink.set_volume(main_menu_music_volume(&settings));
             }
         }
         return;
@@ -75,7 +76,7 @@ pub(crate) fn main_menu_music_system(
 
         let fade_progress = (elapsed_seconds / MAIN_MENU_MUSIC_FADE_SECONDS).clamp(0.0, 1.0);
         if let Some(mut sink) = sink {
-            sink.set_volume(faded_main_menu_music_volume(fade_progress));
+            sink.set_volume(faded_main_menu_music_volume(fade_progress, &settings));
         }
 
         if fade_progress >= 1.0 {
@@ -84,12 +85,13 @@ pub(crate) fn main_menu_music_system(
     }
 }
 
-fn main_menu_music_volume() -> Volume {
-    Volume::Decibels(MAIN_MENU_MUSIC_VOLUME_DECIBELS)
+fn main_menu_music_volume(settings: &ClientSettings) -> Volume {
+    let base = Volume::Decibels(MAIN_MENU_MUSIC_VOLUME_DECIBELS);
+    Volume::Linear(base.to_linear() * settings.audio.music_volume.clamp(0.0, 1.0))
 }
 
-fn faded_main_menu_music_volume(fade_progress: f32) -> Volume {
-    main_menu_music_volume().fade_towards(Volume::SILENT, fade_progress)
+fn faded_main_menu_music_volume(fade_progress: f32, settings: &ClientSettings) -> Volume {
+    main_menu_music_volume(settings).fade_towards(Volume::SILENT, fade_progress)
 }
 
 #[cfg(test)]
@@ -98,7 +100,8 @@ mod tests {
 
     #[test]
     fn main_menu_music_volume_is_half_the_previous_linear_level() {
-        let linear_volume = main_menu_music_volume().to_linear();
+        let settings = ClientSettings::default();
+        let linear_volume = main_menu_music_volume(&settings).to_linear();
 
         assert!(linear_volume > 0.062);
         assert!(linear_volume < 0.064);
@@ -106,9 +109,10 @@ mod tests {
 
     #[test]
     fn faded_main_menu_music_volume_reaches_silence() {
-        let start = main_menu_music_volume().to_linear();
-        let halfway = faded_main_menu_music_volume(0.5).to_linear();
-        let end = faded_main_menu_music_volume(1.0).to_linear();
+        let settings = ClientSettings::default();
+        let start = main_menu_music_volume(&settings).to_linear();
+        let halfway = faded_main_menu_music_volume(0.5, &settings).to_linear();
+        let end = faded_main_menu_music_volume(1.0, &settings).to_linear();
 
         assert!(halfway < start);
         assert!(halfway > end);

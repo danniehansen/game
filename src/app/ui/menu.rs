@@ -1,4 +1,3 @@
-use bevy::{app::AppExit, prelude::*};
 use bevy_egui::egui;
 
 use crate::app::state::{MenuState, SaveStore, Screen, SteamUser};
@@ -14,7 +13,6 @@ pub(super) fn main_menu_ui(
     menu: &mut MenuState,
     store: &SaveStore,
     user: &SteamUser,
-    app_exit: &mut MessageWriter<AppExit>,
 ) {
     theme::screen_scrim(ctx, "main_menu_scrim", 118);
     egui::Area::new("main_menu".into())
@@ -39,8 +37,11 @@ pub(super) fn main_menu_ui(
                             "Coming soon",
                             "Multiplayer is not ready yet.",
                         );
+                        if super::menu_button(ui, "Options").clicked() {
+                            menu.screen = Screen::Options;
+                        }
                         if danger_menu_button(ui, "Quit").clicked() {
-                            app_exit.write(AppExit::Success);
+                            menu.quit_requested = true;
                         }
                     });
                 });

@@ -1,7 +1,10 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::egui;
 
-use crate::{app::state::ClientRuntime, protocol::MAX_HEALTH};
+use crate::{
+    app::state::{ClientRuntime, ClientSettings},
+    protocol::MAX_HEALTH,
+};
 
 use super::theme;
 
@@ -11,8 +14,15 @@ const HEALTH_ICON_WIDTH: f32 = 30.0;
 const FPS_COUNTER_WIDTH: f32 = 58.0;
 const FPS_COUNTER_HEIGHT: f32 = 16.0;
 
-pub(super) fn hud_ui(ctx: &egui::Context, runtime: &ClientRuntime, diagnostics: &DiagnosticsStore) {
-    fps_ui(ctx, diagnostics);
+pub(super) fn hud_ui(
+    ctx: &egui::Context,
+    runtime: &ClientRuntime,
+    diagnostics: &DiagnosticsStore,
+    settings: &ClientSettings,
+) {
+    if settings.hud.show_fps {
+        fps_ui(ctx, diagnostics);
+    }
 
     let Some(player) = runtime.local_view() else {
         return;
@@ -155,7 +165,7 @@ mod tests {
         let mut runtime = ClientRuntime::default();
 
         let _ = ctx.run(raw_input(), |ctx| {
-            hud_ui(ctx, &runtime, &diagnostics);
+            hud_ui(ctx, &runtime, &diagnostics, &ClientSettings::default());
         });
 
         runtime.client_id = Some(1);
@@ -165,7 +175,7 @@ mod tests {
         });
 
         let _ = ctx.run(raw_input(), |ctx| {
-            hud_ui(ctx, &runtime, &diagnostics);
+            hud_ui(ctx, &runtime, &diagnostics, &ClientSettings::default());
         });
 
         assert_eq!(runtime.local_view().expect("local player").health, 75.0);

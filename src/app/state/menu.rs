@@ -7,6 +7,7 @@ use super::{ConfirmationDialog, CreateWorldDialog, EditWorldDialog};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
     MainMenu,
+    Options,
     Worlds,
     #[expect(
         dead_code,
@@ -41,6 +42,7 @@ pub(crate) struct MenuState {
     pub(crate) chat_focus_pending: bool,
     pub(crate) chat_input: String,
     pub(crate) confirmation: Option<ConfirmationDialog>,
+    pub(crate) quit_requested: bool,
 }
 
 impl Default for MenuState {
@@ -57,6 +59,7 @@ impl Default for MenuState {
             chat_focus_pending: false,
             chat_input: String::new(),
             confirmation: None,
+            quit_requested: false,
         }
     }
 }

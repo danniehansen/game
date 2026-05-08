@@ -16,11 +16,15 @@ use crate::{
 
 use self::{
     scene::{apply_world_scene_system, setup_scene},
-    state::{ClientRuntime, LookState, MenuBackdropVisibility, MenuState, SaveStore, SteamUser},
+    state::{
+        ClientRuntime, ClientSettingsStore, LookState, MenuBackdropVisibility, MenuState,
+        SaveStore, SteamUser,
+    },
     systems::{
-        apply_snapshot_system, camera_follow_system, center_cursor_on_focus_system,
-        chat_shortcut_system, client_input_system, main_menu_music_system,
-        menu_backdrop_camera_system, mouse_look_system, network_tick_system, toggle_pause_system,
+        app_quit_system, apply_display_settings_system, apply_snapshot_system,
+        camera_follow_system, center_cursor_on_focus_system, chat_shortcut_system,
+        client_input_system, main_menu_music_system, menu_backdrop_camera_system,
+        mouse_look_system, network_tick_system, save_client_settings_system, toggle_pause_system,
         update_cursor_system,
     },
     ui::{ButtonSoundRequests, button_sound_system, setup_button_sound_assets, ui_system},
@@ -35,25 +39,41 @@ pub fn run_app() -> Result<()> {
 
     let steam = OfflineSteamBackend;
     let user = steam.current_user()?;
+    let settings_store = ClientSettingsStore::platform_default()?;
+    let settings = settings_store.load().unwrap_or_else(|error| {
+        eprintln!("could not load client settings: {error:#}");
+        Default::default()
+    });
+    let window_settings = settings.display;
 
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.015, 0.018, 0.023)))
         .insert_resource(SaveStore(store))
         .insert_resource(SteamUser(user))
+        .insert_resource(settings_store)
+        .insert_resource(settings)
         .insert_resource(MenuState::default())
         .insert_resource(MenuBackdropVisibility::default())
         .insert_resource(ClientRuntime::default())
         .insert_resource(LookState::default())
         .init_resource::<ButtonSoundRequests>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Game".to_owned(),
-                resolution: (1280, 720).into(),
-                present_mode: bevy::window::PresentMode::AutoVsync,
+        .add_plugins(
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Game".to_owned(),
+                    resolution: (
+                        window_settings.resolution.width,
+                        window_settings.resolution.height,
+                    )
+                        .into(),
+                    present_mode: window_settings.present_mode(),
+                    mode: window_settings.window_mode(None),
+                    resizable: false,
+                    ..default()
+                }),
                 ..default()
             }),
-            ..default()
-        }))
+        )
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .configure_sets(
@@ -84,6 +104,12 @@ pub fn run_app() -> Result<()> {
         )
         .add_systems(Update, client_input_system.after(mouse_look_system))
         .add_systems(Update, network_tick_system.after(client_input_system))
+        .add_systems(Update, app_quit_system)
+        .add_systems(Update, apply_display_settings_system)
+        .add_systems(
+            Update,
+            save_client_settings_system.after(apply_display_settings_system),
+        )
         .add_systems(Update, apply_world_scene_system)
         .add_systems(Update, apply_snapshot_system)
         .add_systems(Update, main_menu_music_system)

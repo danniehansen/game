@@ -9,7 +9,7 @@ use crate::{
     protocol::{ClientMessage, MAX_INPUT_DELTA_SECONDS, PlayerInput, PlayerMovement, Vec3Net},
 };
 
-use super::super::state::{ClientRuntime, LookState, MenuState, Screen};
+use super::super::state::{ClientRuntime, ClientSettings, LookState, MenuState, Screen};
 
 pub(crate) fn chat_shortcut_system(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
     if menu.screen != Screen::InGame || menu.pause_open || menu.chat_open {
@@ -72,6 +72,7 @@ pub(crate) fn mouse_look_system(
     accumulated_mouse_motion: Res<AccumulatedMouseMotion>,
     mut look: ResMut<LookState>,
     menu: Res<MenuState>,
+    settings: Res<ClientSettings>,
 ) {
     if menu.screen != Screen::InGame || menu.pause_open || menu.chat_open {
         return;
@@ -82,8 +83,14 @@ pub(crate) fn mouse_look_system(
         return;
     }
 
-    look.yaw -= delta.x * look.sensitivity.x;
-    look.pitch = (look.pitch - delta.y * look.sensitivity.y).clamp(-MAX_LOOK_PITCH, MAX_LOOK_PITCH);
+    let sensitivity = look.sensitivity * settings.input.mouse_sensitivity.clamp(0.25, 3.0);
+    let pitch_delta = if settings.input.invert_mouse_y {
+        delta.y * sensitivity.y
+    } else {
+        -delta.y * sensitivity.y
+    };
+    look.yaw -= delta.x * sensitivity.x;
+    look.pitch = (look.pitch + pitch_delta).clamp(-MAX_LOOK_PITCH, MAX_LOOK_PITCH);
 }
 
 pub(crate) fn client_input_system(

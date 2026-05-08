@@ -4,15 +4,17 @@ mod hud;
 mod menu;
 mod modal;
 mod multiplayer;
+mod options;
 mod pause;
 mod theme;
 mod worlds;
 
-use bevy::{app::AppExit, ecs::system::SystemParam, prelude::*};
+use bevy::window::{Monitor, PrimaryMonitor};
 use bevy::{
     audio::{AudioPlayer, AudioSource, PlaybackSettings, Volume},
     diagnostic::DiagnosticsStore,
 };
+use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_egui::{EguiContexts, egui};
 
 use self::{
@@ -21,30 +23,32 @@ use self::{
     hud::hud_ui,
     menu::main_menu_ui,
     multiplayer::multiplayer_ui,
+    options::options_ui,
     pause::pause_ui,
     theme::{ButtonKind, game_button},
     worlds::worlds_ui,
 };
 use super::state::{
-    ClientRuntime, MenuBackdropVisibility, MenuState, SaveStore, Screen, SteamUser,
+    ClientRuntime, ClientSettings, MenuBackdropVisibility, MenuState, SaveStore, Screen, SteamUser,
 };
 
 #[derive(SystemParam)]
-pub(crate) struct UiResources<'w> {
+pub(crate) struct UiResources<'w, 's> {
     menu: ResMut<'w, MenuState>,
     backdrop_visibility: ResMut<'w, MenuBackdropVisibility>,
     runtime: ResMut<'w, ClientRuntime>,
+    settings: ResMut<'w, ClientSettings>,
     button_sound_requests: ResMut<'w, ButtonSoundRequests>,
     store: Res<'w, SaveStore>,
     user: Res<'w, SteamUser>,
     time: Option<Res<'w, Time>>,
     diagnostics: Res<'w, DiagnosticsStore>,
+    primary_monitor: Query<'w, 's, &'static Monitor, With<PrimaryMonitor>>,
 }
 
 pub(crate) fn ui_system(
     mut contexts: EguiContexts,
     mut resources: UiResources,
-    mut app_exit: MessageWriter<AppExit>,
 ) -> bevy::prelude::Result {
     let ctx = contexts.ctx_mut()?;
     theme::apply_game_style(ctx);
@@ -59,13 +63,9 @@ pub(crate) fn ui_system(
     theme::backdrop_cover(ctx, cover_alpha);
 
     match resources.menu.screen {
-        Screen::MainMenu => main_menu_ui(
-            ctx,
-            &mut resources.menu,
-            &resources.store,
-            &resources.user,
-            &mut app_exit,
-        ),
+        Screen::MainMenu => {
+            main_menu_ui(ctx, &mut resources.menu, &resources.store, &resources.user)
+        }
         Screen::Worlds => worlds_ui(
             ctx,
             &mut resources.menu,
@@ -73,6 +73,15 @@ pub(crate) fn ui_system(
             &resources.store,
             &resources.user,
         ),
+        Screen::Options => {
+            let primary_monitor = resources.primary_monitor.single().ok();
+            options_ui(
+                ctx,
+                &mut resources.menu,
+                &mut resources.settings,
+                primary_monitor,
+            );
+        }
         Screen::Multiplayer => multiplayer_ui(
             ctx,
             &mut resources.menu,
@@ -80,7 +89,12 @@ pub(crate) fn ui_system(
             &resources.user,
         ),
         Screen::InGame => {
-            hud_ui(ctx, &resources.runtime, &resources.diagnostics);
+            hud_ui(
+                ctx,
+                &resources.runtime,
+                &resources.diagnostics,
+                &resources.settings,
+            );
             chat_ui(ctx, &mut resources.menu, &mut resources.runtime);
             if resources.menu.pause_open {
                 pause_ui(
@@ -139,12 +153,13 @@ pub(crate) fn button_sound_system(
     mut commands: Commands,
     mut requests: ResMut<ButtonSoundRequests>,
     assets: Res<ButtonSoundAssets>,
+    settings: Res<ClientSettings>,
 ) {
     for sound in std::mem::take(&mut requests.0) {
         commands.spawn((
             Name::new(format!("Button {:?} Sound", sound)),
             AudioPlayer::new(button_sound_handle(sound, &assets)),
-            PlaybackSettings::DESPAWN.with_volume(button_sound_volume(sound)),
+            PlaybackSettings::DESPAWN.with_volume(button_sound_volume(sound, &settings)),
         ));
     }
 }
@@ -166,11 +181,12 @@ fn button_sound_path(sound: theme::ButtonSound) -> &'static str {
     }
 }
 
-fn button_sound_volume(sound: theme::ButtonSound) -> Volume {
-    match sound {
+fn button_sound_volume(sound: theme::ButtonSound, settings: &ClientSettings) -> Volume {
+    let base = match sound {
         theme::ButtonSound::Click => Volume::Decibels(BUTTON_CLICK_VOLUME_DECIBELS),
         theme::ButtonSound::Hover => Volume::Decibels(BUTTON_HOVER_VOLUME_DECIBELS),
-    }
+    };
+    Volume::Linear(base.to_linear() * settings.audio.ui_volume.clamp(0.0, 1.0))
 }
 
 #[cfg(test)]
@@ -188,8 +204,9 @@ mod tests {
             BUTTON_HOVER_SOUND_PATH
         );
         assert!(
-            button_sound_volume(theme::ButtonSound::Hover).to_linear()
-                < button_sound_volume(theme::ButtonSound::Click).to_linear()
+            button_sound_volume(theme::ButtonSound::Hover, &ClientSettings::default()).to_linear()
+                < button_sound_volume(theme::ButtonSound::Click, &ClientSettings::default())
+                    .to_linear()
         );
     }
 }

@@ -149,6 +149,7 @@ fn menu_and_confirmation_defaults_match_initial_ui_state() {
     assert!(!menu.pause_open);
     assert!(!menu.chat_open);
     assert!(menu.confirmation.is_none());
+    assert!(!menu.quit_requested);
 
     let world_id = Uuid::new_v4();
     let dialog = ConfirmationDialog::delete_world(world_id, "Old Save");

@@ -3,6 +3,7 @@ mod dialogs;
 mod look;
 mod menu;
 mod runtime;
+mod settings;
 #[cfg(test)]
 mod tests;
 
@@ -13,3 +14,6 @@ pub(crate) use dialogs::{
 pub(crate) use look::LookState;
 pub(crate) use menu::{MenuState, SaveStore, Screen, SteamUser};
 pub(crate) use runtime::{ClientLogEntry, ClientLogKind, ClientRuntime};
+pub(crate) use settings::{
+    ClientSettings, ClientSettingsStore, DisplayMode, DisplayResolution, display_resolutions,
+};
