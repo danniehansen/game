@@ -83,11 +83,9 @@ pub(crate) fn toggle_inventory_system(
 pub(crate) fn update_cursor_system(
     mut cursor_options: Single<&mut CursorOptions>,
     menu: Res<MenuState>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
-    let should_capture = menu.screen == Screen::InGame
-        && !menu.pause_open
-        && !menu.inventory_open
-        && !menu.chat_open;
+    let should_capture = gameplay_accepts_controls(&menu, primary_window_focused(&primary_window));
     cursor_options.visible = !should_capture;
     cursor_options.grab_mode = if should_capture {
         CursorGrabMode::Locked
@@ -98,21 +96,33 @@ pub(crate) fn update_cursor_system(
 
 pub(crate) fn center_cursor_on_focus_system(
     mut focus_events: MessageReader<WindowFocused>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
     mut primary_window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
 ) {
     let Ok((window_entity, mut window)) = primary_window.single_mut() else {
         return;
     };
 
-    let should_center = focus_events
-        .read()
-        .any(|event| event.window == window_entity && event.focused);
-    if !should_center {
-        return;
+    let mut should_center = false;
+    let mut lost_focus = false;
+    for event in focus_events.read() {
+        if event.window != window_entity {
+            continue;
+        }
+        if event.focused {
+            should_center = true;
+        } else {
+            lost_focus = true;
+        }
     }
 
-    let center = Vec2::new(window.width() * 0.5, window.height() * 0.5);
-    window.set_cursor_position(Some(center));
+    if lost_focus {
+        keys.reset_all();
+    }
+    if should_center {
+        let center = Vec2::new(window.width() * 0.5, window.height() * 0.5);
+        window.set_cursor_position(Some(center));
+    }
 }
 
 pub(crate) fn mouse_look_system(
@@ -120,13 +130,9 @@ pub(crate) fn mouse_look_system(
     mut look: ResMut<LookState>,
     menu: Res<MenuState>,
     settings: Res<ClientSettings>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
-    if menu.screen != Screen::InGame
-        || menu.pause_open
-        || menu.pause_options_open
-        || menu.inventory_open
-        || menu.chat_open
-    {
+    if !gameplay_accepts_controls(&menu, primary_window_focused(&primary_window)) {
         return;
     }
 
@@ -151,20 +157,17 @@ pub(crate) fn client_input_system(
     mut runtime: ResMut<ClientRuntime>,
     menu: Res<MenuState>,
     look: Res<LookState>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
-    if menu.screen != Screen::InGame
-        || menu.pause_open
-        || menu.pause_options_open
-        || menu.inventory_open
-        || menu.chat_open
-    {
+    if !gameplay_simulation_allowed(&menu) {
         return;
     }
     if runtime.client_id.is_none() {
         return;
     }
 
-    let accepts_movement_input = !menu.inventory_open;
+    let accepts_movement_input =
+        gameplay_accepts_controls(&menu, primary_window_focused(&primary_window));
     let direction = movement_direction_from_keys(&keys, accepts_movement_input);
 
     runtime.input_sequence += 1;
@@ -237,13 +240,9 @@ pub(crate) fn gameplay_inventory_shortcuts_system(
     mut runtime: ResMut<ClientRuntime>,
     menu: Res<MenuState>,
     pickup_target: Res<PickupTargetState>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
-    if menu.screen != Screen::InGame
-        || menu.pause_open
-        || menu.pause_options_open
-        || menu.inventory_open
-        || menu.chat_open
-    {
+    if !gameplay_accepts_controls(&menu, primary_window_focused(&primary_window)) {
         mouse_wheel.clear();
         return;
     }
@@ -316,6 +315,21 @@ pub(crate) fn send_inventory_command(runtime: &mut ClientRuntime, command: Inven
     }
 }
 
+fn primary_window_focused(primary_window: &Query<&Window, With<PrimaryWindow>>) -> bool {
+    primary_window
+        .single()
+        .map(|window| window.focused)
+        .unwrap_or(true)
+}
+
+fn gameplay_simulation_allowed(menu: &MenuState) -> bool {
+    menu.screen == Screen::InGame && !menu.pause_open && !menu.pause_options_open && !menu.chat_open
+}
+
+fn gameplay_accepts_controls(menu: &MenuState, window_focused: bool) -> bool {
+    window_focused && gameplay_simulation_allowed(menu) && !menu.inventory_open
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +380,42 @@ mod tests {
             Vec3Net::new(1.0, 0.0, 1.0)
         );
         assert_eq!(movement_direction_from_keys(&keys, false), Vec3Net::ZERO);
+    }
+
+    #[test]
+    fn unfocused_gameplay_blocks_controls_without_blocking_simulation() {
+        let menu = MenuState {
+            screen: Screen::InGame,
+            ..Default::default()
+        };
+
+        assert!(gameplay_simulation_allowed(&menu));
+        assert!(gameplay_accepts_controls(&menu, true));
+        assert!(!gameplay_accepts_controls(&menu, false));
+    }
+
+    #[test]
+    fn pause_options_block_gameplay_simulation_and_controls() {
+        let menu = MenuState {
+            screen: Screen::InGame,
+            pause_open: true,
+            pause_options_open: true,
+            ..Default::default()
+        };
+
+        assert!(!gameplay_simulation_allowed(&menu));
+        assert!(!gameplay_accepts_controls(&menu, true));
+    }
+
+    #[test]
+    fn inventory_blocks_controls_without_blocking_simulation() {
+        let menu = MenuState {
+            screen: Screen::InGame,
+            inventory_open: true,
+            ..Default::default()
+        };
+
+        assert!(gameplay_simulation_allowed(&menu));
+        assert!(!gameplay_accepts_controls(&menu, true));
     }
 }

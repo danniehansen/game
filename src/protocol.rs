@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::world::{MapType, WorldData};
 
 pub type ClientId = u64;
-pub type PacketSequence = u64;
 pub type SteamId = u64;
 
 pub const PROTOCOL_VERSION: u32 = 11;
@@ -104,17 +103,6 @@ pub enum ClientMessage {
 }
 
 impl ClientMessage {
-    pub fn kind(&self) -> ClientMessageKind {
-        match self {
-            Self::Auth { .. } => ClientMessageKind::Auth,
-            Self::Movement(_) => ClientMessageKind::Movement,
-            Self::Chat { .. } => ClientMessageKind::Chat,
-            Self::Inventory(_) => ClientMessageKind::Inventory,
-            Self::Heartbeat => ClientMessageKind::Heartbeat,
-            Self::Disconnect => ClientMessageKind::Disconnect,
-        }
-    }
-
     pub fn delivery(&self) -> PacketDelivery {
         match self {
             Self::Auth { .. } | Self::Chat { .. } | Self::Inventory(_) | Self::Disconnect => {
@@ -274,19 +262,6 @@ pub enum ServerMessage {
 }
 
 impl ServerMessage {
-    pub fn kind(&self) -> ServerMessageKind {
-        match self {
-            Self::Welcome { .. } => ServerMessageKind::Welcome,
-            Self::AuthRejected { .. } => ServerMessageKind::AuthRejected,
-            Self::PlayerEvent(_) => ServerMessageKind::PlayerEvent,
-            Self::Snapshot(_) => ServerMessageKind::Snapshot,
-            Self::Correction(_) => ServerMessageKind::Correction,
-            Self::Chat(_) => ServerMessageKind::Chat,
-            Self::ItemMerged { .. } => ServerMessageKind::ItemMerged,
-            Self::Heartbeat => ServerMessageKind::Heartbeat,
-        }
-    }
-
     pub fn delivery(&self) -> PacketDelivery {
         match self {
             Self::Welcome { .. }
@@ -303,88 +278,6 @@ impl ServerMessage {
 pub enum PacketDelivery {
     Unreliable,
     Reliable,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ClientMessageKind {
-    Auth,
-    Movement,
-    Chat,
-    Inventory,
-    Heartbeat,
-    Disconnect,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ServerMessageKind {
-    Welcome,
-    AuthRejected,
-    PlayerEvent,
-    Snapshot,
-    Correction,
-    Chat,
-    ItemMerged,
-    Heartbeat,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ClientPacket {
-    pub protocol_version: u32,
-    pub sequence: PacketSequence,
-    pub ack: PacketSequence,
-    pub delivery: PacketDelivery,
-    pub kind: ClientMessageKind,
-    pub message: ClientMessage,
-}
-
-impl ClientPacket {
-    pub fn new(sequence: PacketSequence, ack: PacketSequence, message: ClientMessage) -> Self {
-        Self {
-            protocol_version: PROTOCOL_VERSION,
-            sequence,
-            ack,
-            delivery: message.delivery(),
-            kind: message.kind(),
-            message,
-        }
-    }
-
-    pub fn into_message(self) -> Option<ClientMessage> {
-        (self.protocol_version == PROTOCOL_VERSION
-            && self.delivery == self.message.delivery()
-            && self.kind == self.message.kind())
-        .then_some(self.message)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ServerPacket {
-    pub protocol_version: u32,
-    pub sequence: PacketSequence,
-    pub ack: PacketSequence,
-    pub delivery: PacketDelivery,
-    pub kind: ServerMessageKind,
-    pub message: ServerMessage,
-}
-
-impl ServerPacket {
-    pub fn new(sequence: PacketSequence, ack: PacketSequence, message: ServerMessage) -> Self {
-        Self {
-            protocol_version: PROTOCOL_VERSION,
-            sequence,
-            ack,
-            delivery: message.delivery(),
-            kind: message.kind(),
-            message,
-        }
-    }
-
-    pub fn into_message(self) -> Option<ServerMessage> {
-        (self.protocol_version == PROTOCOL_VERSION
-            && self.delivery == self.message.delivery()
-            && self.kind == self.message.kind())
-        .then_some(self.message)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -456,14 +349,21 @@ mod tests {
     }
 
     #[test]
-    fn packets_validate_version_kind_and_delivery() {
-        let packet = ClientPacket::new(7, 3, ClientMessage::Heartbeat);
-        assert_eq!(packet.kind, ClientMessageKind::Heartbeat);
-        assert_eq!(packet.delivery, PacketDelivery::Unreliable);
-        assert!(packet.into_message().is_some());
-
-        let mut packet = ServerPacket::new(4, 2, ServerMessage::Heartbeat);
-        packet.kind = ServerMessageKind::Snapshot;
-        assert!(packet.into_message().is_none());
+    fn message_delivery_maps_network_channels() {
+        assert_eq!(
+            ClientMessage::Heartbeat.delivery(),
+            PacketDelivery::Unreliable
+        );
+        assert_eq!(
+            ClientMessage::Chat {
+                text: "hello".to_owned(),
+            }
+            .delivery(),
+            PacketDelivery::Reliable
+        );
+        assert_eq!(
+            ServerMessage::Heartbeat.delivery(),
+            PacketDelivery::Unreliable
+        );
     }
 }

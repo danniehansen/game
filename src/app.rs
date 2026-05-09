@@ -4,7 +4,10 @@ mod systems;
 mod ui;
 
 use anyhow::Result;
-use bevy::{diagnostic::FrameTimeDiagnosticsPlugin, prelude::*, transform::TransformSystems};
+use bevy::{
+    diagnostic::FrameTimeDiagnosticsPlugin, prelude::*, transform::TransformSystems,
+    winit::WinitSettings,
+};
 use bevy_egui::{EguiPlugin, EguiPostUpdateSet, EguiPrimaryContextPass};
 
 use crate::{
@@ -16,7 +19,7 @@ use self::{
     scene::{apply_world_scene_system, setup_scene},
     state::{
         ClientRuntime, ClientSettingsStore, InventoryUiState, LookState, MenuBackdropVisibility,
-        MenuState, PickupTargetState, SaveStore, SteamUser,
+        MenuState, PickupTargetState, SaveStore, SessionShutdownTasks, SteamUser,
     },
     systems::{
         app_quit_system, apply_display_settings_system, apply_dropped_items_system,
@@ -24,8 +27,8 @@ use self::{
         center_cursor_on_focus_system, chat_shortcut_system, client_input_system,
         gameplay_inventory_shortcuts_system, main_menu_music_system, menu_backdrop_camera_system,
         mouse_look_system, network_tick_system, save_client_settings_system,
-        toggle_inventory_system, toggle_pause_system, update_cursor_system,
-        update_pickup_target_system,
+        session_shutdown_poll_system, toggle_inventory_system, toggle_pause_system,
+        update_cursor_system, update_pickup_target_system,
     },
     ui::{ButtonSoundRequests, button_sound_system, setup_button_sound_assets, ui_system},
 };
@@ -55,9 +58,11 @@ pub fn run_app() -> Result<()> {
         .insert_resource(MenuState::default())
         .insert_resource(MenuBackdropVisibility::default())
         .insert_resource(ClientRuntime::default())
+        .insert_resource(SessionShutdownTasks::default())
         .insert_resource(InventoryUiState::default())
         .insert_resource(PickupTargetState::default())
         .insert_resource(LookState::default())
+        .insert_resource(WinitSettings::continuous())
         .init_resource::<ButtonSoundRequests>()
         .add_plugins(
             DefaultPlugins.set(WindowPlugin {
@@ -93,7 +98,6 @@ pub fn run_app() -> Result<()> {
             chat_shortcut_system
                 .before(toggle_pause_system)
                 .before(toggle_inventory_system)
-                .before(center_cursor_on_focus_system)
                 .before(update_cursor_system)
                 .before(mouse_look_system)
                 .before(client_input_system),
@@ -115,20 +119,30 @@ pub fn run_app() -> Result<()> {
                 .before(client_input_system)
                 .before(gameplay_inventory_shortcuts_system),
         )
-        .add_systems(Update, center_cursor_on_focus_system)
+        .add_systems(
+            Update,
+            center_cursor_on_focus_system
+                .before(chat_shortcut_system)
+                .before(toggle_pause_system)
+                .before(toggle_inventory_system)
+                .before(update_cursor_system)
+                .before(mouse_look_system)
+                .before(client_input_system),
+        )
         .add_systems(Update, update_cursor_system)
         .add_systems(Update, mouse_look_system)
         .add_systems(Update, client_input_system.after(mouse_look_system))
         .add_systems(Update, gameplay_inventory_shortcuts_system)
         .add_systems(Update, network_tick_system.after(client_input_system))
+        .add_systems(Update, session_shutdown_poll_system)
         .add_systems(Update, app_quit_system)
         .add_systems(Update, apply_display_settings_system)
         .add_systems(
             Update,
             save_client_settings_system.after(apply_display_settings_system),
         )
-        .add_systems(Update, apply_world_scene_system)
-        .add_systems(Update, apply_snapshot_system)
+        .add_systems(Update, apply_world_scene_system.after(network_tick_system))
+        .add_systems(Update, apply_snapshot_system.after(network_tick_system))
         .add_systems(
             Update,
             apply_dropped_items_system.after(network_tick_system),
@@ -143,6 +157,7 @@ pub fn run_app() -> Result<()> {
             Update,
             camera_follow_system
                 .after(client_input_system)
+                .after(network_tick_system)
                 .after(mouse_look_system),
         )
         .add_systems(

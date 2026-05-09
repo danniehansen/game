@@ -5,7 +5,7 @@ use bevy_egui::egui::{
     Vec2,
 };
 
-use super::{accent, accent_dark, button_fill, button_hover_fill, button_stroke, muted_text, text};
+use super::{accent, accent_dark, button_fill, button_hover_fill, button_stroke, text};
 
 #[derive(Debug, Clone, Copy)]
 pub(in crate::app::ui) enum ButtonKind {
@@ -64,32 +64,6 @@ pub(in crate::app::ui) fn game_button(
     width: f32,
 ) -> egui::Response {
     sized_button(ui, label, kind, ButtonDensity::Menu, width)
-}
-
-pub(in crate::app::ui) fn disabled_game_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    width: f32,
-) -> egui::Response {
-    let height = ButtonDensity::Menu.spec().height;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-
-    ui.painter().rect(
-        rect,
-        4,
-        Color32::from_rgba_unmultiplied(28, 32, 38, 210),
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(92, 102, 116, 72)),
-        egui::StrokeKind::Inside,
-    );
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        FontId::new(14.0, FontFamily::Proportional),
-        muted_text(),
-    );
-
-    response
 }
 
 pub(in crate::app::ui) fn compact_button(

@@ -31,7 +31,8 @@ use self::{
     worlds::worlds_ui,
 };
 use super::state::{
-    ClientRuntime, ClientSettings, MenuBackdropVisibility, MenuState, SaveStore, Screen, SteamUser,
+    ClientRuntime, ClientSettings, MenuBackdropVisibility, MenuState, SaveStore, Screen,
+    SessionShutdownTasks, SteamUser,
 };
 
 #[derive(SystemParam)]
@@ -42,6 +43,7 @@ pub(crate) struct UiResources<'w, 's> {
     settings: ResMut<'w, ClientSettings>,
     inventory_ui: ResMut<'w, super::state::InventoryUiState>,
     pickup_target: Res<'w, super::state::PickupTargetState>,
+    shutdown_tasks: ResMut<'w, SessionShutdownTasks>,
     button_sound_requests: ResMut<'w, ButtonSoundRequests>,
     store: Res<'w, SaveStore>,
     user: Res<'w, SteamUser>,
@@ -130,6 +132,7 @@ pub(crate) fn ui_system(
                     ctx,
                     &mut resources.menu,
                     &mut resources.runtime,
+                    &mut resources.shutdown_tasks,
                     &resources.store,
                 );
             }

@@ -1,6 +1,6 @@
 use bevy_egui::egui;
 
-use crate::app::state::{ClientRuntime, MenuState, SaveStore, Screen};
+use crate::app::state::{ClientRuntime, MenuState, SaveStore, Screen, SessionShutdownTasks};
 
 use super::{danger_menu_button, menu_button, theme};
 
@@ -8,6 +8,7 @@ pub(super) fn pause_ui(
     ctx: &egui::Context,
     menu: &mut MenuState,
     runtime: &mut ClientRuntime,
+    shutdown_tasks: &mut SessionShutdownTasks,
     store: &SaveStore,
 ) {
     let screen_rect = ctx.content_rect();
@@ -49,7 +50,7 @@ pub(super) fn pause_ui(
                         menu.pause_options_open = true;
                     }
                     if danger_menu_button(ui, "Quit").clicked() {
-                        runtime.shutdown(&store.0);
+                        runtime.shutdown_in_background(store.0.clone(), shutdown_tasks);
                         menu.screen = Screen::MainMenu;
                         menu.pause_open = false;
                         menu.pause_options_open = false;

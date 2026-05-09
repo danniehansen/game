@@ -30,13 +30,9 @@ pub(super) fn main_menu_ui(
                             refresh_worlds(menu, store);
                             menu.screen = Screen::Worlds;
                         }
-                        let multiplayer =
-                            theme::disabled_game_button(ui, "Multiplayer", MENU_WIDTH - 100.0);
-                        theme::wow_tooltip(
-                            multiplayer,
-                            "Coming soon",
-                            "Multiplayer is not ready yet.",
-                        );
+                        if primary_menu_button(ui, "Multiplayer").clicked() {
+                            menu.screen = Screen::Multiplayer;
+                        }
                         if super::menu_button(ui, "Options").clicked() {
                             menu.screen = Screen::Options;
                         }

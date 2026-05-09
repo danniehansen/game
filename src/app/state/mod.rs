@@ -17,7 +17,7 @@ pub(crate) use inventory::{
 };
 pub(crate) use look::LookState;
 pub(crate) use menu::{MenuState, SaveStore, Screen, SteamUser};
-pub(crate) use runtime::{ClientLogEntry, ClientLogKind, ClientRuntime};
+pub(crate) use runtime::{ClientLogEntry, ClientLogKind, ClientRuntime, SessionShutdownTasks};
 pub(crate) use settings::{
     ClientSettings, ClientSettingsStore, DisplayMode, DisplayResolution, display_resolutions,
 };

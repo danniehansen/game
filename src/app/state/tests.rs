@@ -145,6 +145,31 @@ fn client_messages_keep_recent_entries_only() {
 }
 
 #[test]
+fn shutdown_tasks_drain_completed_results() {
+    let mut tasks = SessionShutdownTasks::default();
+    tasks.push_finished_for_test(Ok(()));
+    tasks.push_finished_for_test(Err("save failed".to_owned()));
+
+    let mut results = Vec::new();
+    for _ in 0..20 {
+        results.extend(tasks.drain_finished());
+        if results.len() == 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    assert_eq!(tasks.pending_len(), 0);
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().any(Result::is_ok));
+    assert!(
+        results
+            .iter()
+            .any(|result| matches!(result, Err(error) if error == "save failed"))
+    );
+}
+
+#[test]
 fn menu_and_confirmation_defaults_match_initial_ui_state() {
     let menu = MenuState::default();
     assert_eq!(menu.screen, Screen::MainMenu);

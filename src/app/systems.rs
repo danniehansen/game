@@ -19,7 +19,7 @@ pub(crate) use input::{
 pub(crate) use items::{
     apply_dropped_items_system, apply_held_item_visual_system, update_pickup_target_system,
 };
-pub(crate) use network::network_tick_system;
+pub(crate) use network::{network_tick_system, session_shutdown_poll_system};
 pub(crate) use players::apply_snapshot_system;
 pub(crate) use quit::app_quit_system;
 pub(crate) use settings::save_client_settings_system;

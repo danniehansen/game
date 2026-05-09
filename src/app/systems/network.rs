@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     app::{
-        state::{ClientRuntime, MenuState, Screen},
+        state::{ClientRuntime, MenuState, Screen, SessionShutdownTasks},
         ui::ButtonSoundRequests,
     },
     protocol::ServerMessage,
@@ -36,5 +36,16 @@ pub(crate) fn network_tick_system(
             button_sound_requests.push_hover();
         }
         runtime.apply_message(message);
+    }
+}
+
+pub(crate) fn session_shutdown_poll_system(
+    mut menu: ResMut<MenuState>,
+    mut shutdown_tasks: ResMut<SessionShutdownTasks>,
+) {
+    for result in shutdown_tasks.drain_finished() {
+        if let Err(error) = result {
+            menu.status = Some(format!("save/shutdown error: {error}"));
+        }
     }
 }

@@ -2,6 +2,7 @@ use bevy_egui::egui;
 
 use crate::{
     app::state::{ClientRuntime, MenuState, Screen, SteamUser},
+    net::ClientSession,
     steam::{OfflineSteamBackend, SteamBackend},
 };
 
@@ -10,8 +11,8 @@ use super::theme::{self, ButtonKind};
 pub(super) fn multiplayer_ui(
     ctx: &egui::Context,
     menu: &mut MenuState,
-    _runtime: &mut ClientRuntime,
-    _user: &SteamUser,
+    runtime: &mut ClientRuntime,
+    user: &SteamUser,
 ) {
     theme::screen_scrim(ctx, "multiplayer_scrim", 145);
     theme::anchored_panel(
@@ -32,6 +33,7 @@ pub(super) fn multiplayer_ui(
 
             ui.add_space(16.0);
             theme::inset_frame().show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 ui.vertical(|ui| {
                     ui.label(theme::field_label("Steam"));
                     if theme::game_button(ui, "Open Server Browser", ButtonKind::Primary, 300.0)
@@ -57,8 +59,25 @@ pub(super) fn multiplayer_ui(
                         ui.add_sized([320.0, 34.0], theme::text_input(&mut menu.multiplayer_addr));
                         if theme::compact_button(ui, "Connect", ButtonKind::Primary, 92.0).clicked()
                         {
-                            menu.status =
-                                Some("client networking is moving to Lightyear replication".into());
+                            match menu
+                                .multiplayer_addr
+                                .parse()
+                                .map_err(anyhow::Error::from)
+                                .and_then(|addr| ClientSession::connect(addr, &user.0))
+                            {
+                                Ok(session) => {
+                                    runtime.start_session(session, None);
+                                    menu.screen = Screen::InGame;
+                                    menu.pause_open = false;
+                                    menu.pause_options_open = false;
+                                    menu.chat_open = false;
+                                    menu.chat_focus_pending = false;
+                                    menu.status = None;
+                                }
+                                Err(error) => {
+                                    menu.status = Some(format!("connect failed: {error}"));
+                                }
+                            }
                         }
                     },
                 );

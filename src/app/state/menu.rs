@@ -9,10 +9,6 @@ pub(crate) enum Screen {
     MainMenu,
     Options,
     Worlds,
-    #[expect(
-        dead_code,
-        reason = "The multiplayer screen is built but gated behind a coming-soon menu entry."
-    )]
     Multiplayer,
     InGame,
 }

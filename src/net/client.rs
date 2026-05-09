@@ -1,45 +1,413 @@
-use anyhow::Result;
-
-use crate::{
-    net::local::LocalGameSession,
-    protocol::{ClientMessage, ServerMessage},
-    save::{WorldSave, WorldStore},
-    steam::AuthenticatedUser,
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    sync::{
+        Mutex,
+        mpsc::{self, Receiver, Sender},
+    },
+    thread::{self, JoinHandle},
+    time::Duration,
 };
 
-#[derive(Debug)]
+use anyhow::{Context, Result, bail};
+use bevy::prelude::*;
+use lightyear::prelude::{
+    Authentication, Connected, LocalAddr, MessageReceiver, MessageSender, UdpIo, client,
+};
+
+use crate::{
+    net::{
+        host::{GameServerHandle, spawn_loopback_server},
+        protocol::{
+            LIGHTYEAR_PROTOCOL_ID, LightyearProtocolPlugin, private_key, send_client_message,
+        },
+    },
+    protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage},
+    save::{WorldSave, WorldStore},
+    server::ServerSettings,
+    steam::{AuthMode, AuthenticatedUser},
+};
+
+const CLIENT_SLEEP: Duration = Duration::from_millis(1);
+const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub enum ClientSession {
-    Local(Box<LocalGameSession>),
+    Network(Box<LightyearGameSession>),
+}
+
+impl std::fmt::Debug for ClientSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Network(_) => formatter.write_str("ClientSession::Network"),
+        }
+    }
 }
 
 impl ClientSession {
     pub fn start_singleplayer(save: WorldSave, user: &AuthenticatedUser) -> Result<Self> {
-        LocalGameSession::start(save, user).map(|session| Self::Local(Box::new(session)))
+        LightyearGameSession::start_singleplayer(save, user)
+            .map(Box::new)
+            .map(Self::Network)
+    }
+
+    pub fn connect(addr: SocketAddr, user: &AuthenticatedUser) -> Result<Self> {
+        LightyearGameSession::connect(addr, user)
+            .map(Box::new)
+            .map(Self::Network)
     }
 
     pub fn send(&mut self, message: ClientMessage) -> Result<()> {
         match self {
-            Self::Local(session) => {
-                session.send(message);
-                Ok(())
-            }
+            Self::Network(session) => session.send(message),
         }
     }
 
     pub fn tick(&mut self, delta_seconds: f32) -> Result<Vec<ServerMessage>> {
         match self {
-            Self::Local(session) => {
-                session.tick(delta_seconds);
-                Ok(session.drain())
-            }
+            Self::Network(session) => session.tick(delta_seconds),
         }
     }
 
     pub fn shutdown(&mut self, store: &WorldStore) -> Result<()> {
         let _ = self.send(ClientMessage::Disconnect);
         match self {
-            Self::Local(session) => session.persist(store)?,
+            Self::Network(session) => session.shutdown(store)?,
         }
         Ok(())
+    }
+}
+
+pub struct LightyearGameSession {
+    command_tx: Sender<ClientCommand>,
+    incoming: Mutex<Receiver<ServerMessage>>,
+    inbox: VecDeque<ServerMessage>,
+    thread: Mutex<Option<JoinHandle<()>>>,
+    local_server: Mutex<Option<GameServerHandle>>,
+}
+
+impl std::fmt::Debug for LightyearGameSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let local_server_running = self
+            .local_server
+            .lock()
+            .is_ok_and(|local_server| local_server.is_some());
+        formatter
+            .debug_struct("LightyearGameSession")
+            .field("local_server", &local_server_running)
+            .field("inbox_len", &self.inbox.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl LightyearGameSession {
+    pub fn start_singleplayer(save: WorldSave, user: &AuthenticatedUser) -> Result<Self> {
+        let spawned = spawn_loopback_server(
+            save,
+            ServerSettings {
+                auth_mode: AuthMode::Offline,
+                singleplayer_host: Some(user.steam_id),
+            },
+        )?;
+        Self::connect_inner(spawned.addr, user, Some(spawned.handle))
+    }
+
+    pub fn connect(addr: SocketAddr, user: &AuthenticatedUser) -> Result<Self> {
+        Self::connect_inner(addr, user, None)
+    }
+
+    fn connect_inner(
+        addr: SocketAddr,
+        user: &AuthenticatedUser,
+        mut local_server: Option<GameServerHandle>,
+    ) -> Result<Self> {
+        let (command_tx, command_rx) = mpsc::channel();
+        let (incoming_tx, incoming) = mpsc::channel();
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let steam_id = user.steam_id;
+        let auth_message = ClientMessage::Auth {
+            protocol_version: PROTOCOL_VERSION,
+            steam_id,
+            display_name: user.display_name.clone(),
+            token: user.token.clone(),
+        };
+        let thread = thread::Builder::new()
+            .name("lightyear-game-client".to_owned())
+            .spawn(move || {
+                match build_client_app(addr, steam_id, auth_message, command_rx, incoming_tx) {
+                    Ok(mut app) => {
+                        let _ = startup_tx.send(Ok(()));
+                        run_client_app(&mut app);
+                    }
+                    Err(error) => {
+                        let _ = startup_tx.send(Err(format!("{error:#}")));
+                    }
+                }
+            })
+            .context("could not spawn Lightyear game client")?;
+
+        match startup_rx
+            .recv_timeout(AUTH_TIMEOUT)
+            .context("Lightyear game client did not start")?
+        {
+            Ok(()) => {}
+            Err(error) => {
+                let _ = thread.join();
+                if let Some(mut local_server) = local_server.take() {
+                    let _ = local_server.shutdown();
+                }
+                bail!("{error}");
+            }
+        }
+
+        let first_message = match incoming.recv_timeout(AUTH_TIMEOUT) {
+            Ok(message) => message,
+            Err(error) => {
+                let _ = command_tx.send(ClientCommand::Shutdown);
+                let _ = thread.join();
+                if let Some(mut local_server) = local_server.take() {
+                    let _ = local_server.shutdown();
+                }
+                return Err(error).context("Lightyear game server did not answer auth");
+            }
+        };
+        if let ServerMessage::AuthRejected { reason } = first_message {
+            let _ = command_tx.send(ClientCommand::Shutdown);
+            let _ = thread.join();
+            if let Some(mut local_server) = local_server.take() {
+                let _ = local_server.shutdown();
+            }
+            bail!("auth rejected: {reason}");
+        }
+
+        Ok(Self {
+            command_tx,
+            incoming: Mutex::new(incoming),
+            inbox: VecDeque::from([first_message]),
+            thread: Mutex::new(Some(thread)),
+            local_server: Mutex::new(local_server),
+        })
+    }
+
+    pub fn send(&mut self, message: ClientMessage) -> Result<()> {
+        self.command_tx
+            .send(ClientCommand::Send(message))
+            .context("Lightyear game client is not running")
+    }
+
+    pub fn tick(&mut self, _delta_seconds: f32) -> Result<Vec<ServerMessage>> {
+        let incoming = self
+            .incoming
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Lightyear receiver lock is poisoned"))?;
+        self.inbox.extend(incoming.try_iter());
+        Ok(self.inbox.drain(..).collect())
+    }
+
+    pub fn shutdown(&mut self, store: &WorldStore) -> Result<()> {
+        let world_save = {
+            let local_server = self
+                .local_server
+                .lock()
+                .map_err(|_| anyhow::anyhow!("game server handle lock is poisoned"))?;
+            local_server
+                .as_ref()
+                .map(GameServerHandle::world_save)
+                .transpose()?
+        };
+        if let Some(world_save) = world_save {
+            store.save_world(&world_save)?;
+        }
+        self.shutdown_transport()
+    }
+
+    fn shutdown_transport(&mut self) -> Result<()> {
+        let _ = self.command_tx.send(ClientCommand::Shutdown);
+
+        let mut local_server = self
+            .local_server
+            .lock()
+            .map_err(|_| anyhow::anyhow!("game server handle lock is poisoned"))?;
+        if let Some(mut local_server) = local_server.take() {
+            local_server.shutdown()?;
+        }
+        drop(local_server);
+
+        let mut thread = self
+            .thread
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Lightyear game client thread lock is poisoned"))?;
+        if let Some(thread) = thread.take() {
+            thread
+                .join()
+                .map_err(|_| anyhow::anyhow!("Lightyear game client thread panicked"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for LightyearGameSession {
+    fn drop(&mut self) {
+        let _ = self.shutdown_transport();
+    }
+}
+
+#[derive(Debug)]
+enum ClientCommand {
+    Send(ClientMessage),
+    Shutdown,
+}
+
+#[derive(Resource)]
+struct ClientCommandInbox(Mutex<Receiver<ClientCommand>>);
+
+#[derive(Resource)]
+struct ClientIncoming(Sender<ServerMessage>);
+
+#[derive(Resource)]
+struct ClientAuth {
+    message: ClientMessage,
+    sent: bool,
+}
+
+#[derive(Resource, Default)]
+struct PendingClientMessages(VecDeque<ClientMessage>);
+
+#[derive(Resource, Default)]
+struct ClientShutdown {
+    requested: bool,
+}
+
+fn build_client_app(
+    server_addr: SocketAddr,
+    steam_id: u64,
+    auth_message: ClientMessage,
+    command_rx: Receiver<ClientCommand>,
+    incoming_tx: Sender<ServerMessage>,
+) -> Result<App> {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(client::ClientPlugins {
+        tick_duration: Duration::from_secs_f32(1.0 / crate::protocol::SERVER_TICK_RATE_HZ),
+    });
+    app.add_plugins(LightyearProtocolPlugin);
+
+    let client_entity = app
+        .world_mut()
+        .spawn((
+            Name::new("Lightyear Game Client"),
+            LocalAddr(SocketAddr::from(([0, 0, 0, 0], 0))),
+            UdpIo::default(),
+            client::NetcodeClient::new(
+                Authentication::Manual {
+                    server_addr,
+                    client_id: steam_id,
+                    private_key: private_key(),
+                    protocol_id: LIGHTYEAR_PROTOCOL_ID,
+                },
+                client::NetcodeConfig::default(),
+            )
+            .context("could not create Lightyear netcode client")?,
+        ))
+        .id();
+
+    app.insert_resource(ClientCommandInbox(Mutex::new(command_rx)));
+    app.insert_resource(ClientIncoming(incoming_tx));
+    app.insert_resource(ClientAuth {
+        message: auth_message,
+        sent: false,
+    });
+    app.insert_resource(PendingClientMessages::default());
+    app.insert_resource(ClientShutdown::default());
+
+    app.add_systems(Startup, move |mut commands: Commands| {
+        commands.trigger(client::Connect {
+            entity: client_entity,
+        });
+    });
+    app.add_systems(
+        Update,
+        (
+            send_client_messages,
+            receive_server_messages,
+            report_client_disconnect,
+        )
+            .chain(),
+    );
+    app.finish();
+    app.cleanup();
+
+    Ok(app)
+}
+
+fn run_client_app(app: &mut App) {
+    loop {
+        app.update();
+        if app.world().resource::<ClientShutdown>().requested {
+            return;
+        }
+        thread::sleep(CLIENT_SLEEP);
+    }
+}
+
+fn send_client_messages(
+    inbox: Res<ClientCommandInbox>,
+    mut auth: ResMut<ClientAuth>,
+    mut pending: ResMut<PendingClientMessages>,
+    mut shutdown: ResMut<ClientShutdown>,
+    mut clients: Query<(&mut MessageSender<ClientMessage>, Has<Connected>), With<client::Client>>,
+) {
+    let commands = {
+        let Ok(receiver) = inbox.0.lock() else {
+            shutdown.requested = true;
+            return;
+        };
+        receiver.try_iter().collect::<Vec<_>>()
+    };
+
+    for command in commands {
+        match command {
+            ClientCommand::Send(message) => pending.0.push_back(message),
+            ClientCommand::Shutdown => shutdown.requested = true,
+        }
+    }
+
+    for (mut sender, connected) in &mut clients {
+        if !connected {
+            continue;
+        }
+        if !auth.sent {
+            send_client_message(&mut sender, auth.message.clone());
+            auth.sent = true;
+        }
+        while let Some(message) = pending.0.pop_front() {
+            send_client_message(&mut sender, message);
+        }
+    }
+}
+
+fn receive_server_messages(
+    incoming: Res<ClientIncoming>,
+    mut receivers: Query<&mut MessageReceiver<ServerMessage>, With<client::Client>>,
+) {
+    for mut receiver in &mut receivers {
+        let messages: Vec<ServerMessage> = receiver.receive().collect();
+        for message in messages {
+            if incoming.0.send(message).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+fn report_client_disconnect(
+    incoming: Res<ClientIncoming>,
+    disconnected: Query<&client::Disconnected, (With<client::Client>, Added<client::Disconnected>)>,
+) {
+    for disconnected in &disconnected {
+        if let Some(reason) = &disconnected.reason {
+            let _ = incoming.0.send(ServerMessage::AuthRejected {
+                reason: reason.clone(),
+            });
+        }
     }
 }

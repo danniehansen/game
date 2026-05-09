@@ -1,3 +1,5 @@
+use std::thread::{self, JoinHandle};
+
 use bevy::prelude::*;
 use uuid::Uuid;
 
@@ -62,6 +64,54 @@ pub(crate) struct ClientRuntime {
     pub(crate) input_sequence: u64,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct SessionShutdownTasks(Vec<JoinHandle<Result<(), String>>>);
+
+impl SessionShutdownTasks {
+    pub(crate) fn spawn(&mut self, mut session: ClientSession, store: WorldStore) {
+        match thread::Builder::new()
+            .name("game-session-shutdown".to_owned())
+            .spawn(move || {
+                session
+                    .shutdown(&store)
+                    .map_err(|error| format!("{error:#}"))
+            }) {
+            Ok(task) => self.0.push(task),
+            Err(error) => eprintln!("could not spawn game session shutdown: {error:#}"),
+        }
+    }
+
+    pub(crate) fn drain_finished(&mut self) -> Vec<Result<(), String>> {
+        let mut results = Vec::new();
+        let mut pending = Vec::new();
+
+        for task in self.0.drain(..) {
+            if task.is_finished() {
+                results.push(
+                    task.join().unwrap_or_else(|_| {
+                        Err("game session shutdown thread panicked".to_owned())
+                    }),
+                );
+            } else {
+                pending.push(task);
+            }
+        }
+
+        self.0 = pending;
+        results
+    }
+
+    #[cfg(test)]
+    pub(super) fn push_finished_for_test(&mut self, result: Result<(), String>) {
+        self.0.push(thread::spawn(move || result));
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 impl ClientRuntime {
     pub(crate) fn start_session(&mut self, session: ClientSession, world_id: Option<Uuid>) {
         self.session = Some(session);
@@ -75,13 +125,18 @@ impl ClientRuntime {
         self.input_sequence = 0;
     }
 
-    pub(crate) fn shutdown(&mut self, store: &WorldStore) {
-        if let Some(session) = self.session.as_mut()
-            && let Err(error) = session.shutdown(store)
-        {
-            self.push_error_message(format!("save/shutdown error: {error}"));
+    pub(crate) fn shutdown_in_background(
+        &mut self,
+        store: WorldStore,
+        tasks: &mut SessionShutdownTasks,
+    ) {
+        if let Some(session) = self.session.take() {
+            tasks.spawn(session, store);
         }
+        self.clear_session_state();
+    }
 
+    fn clear_session_state(&mut self) {
         self.session = None;
         self.active_world_id = None;
         self.client_id = None;
