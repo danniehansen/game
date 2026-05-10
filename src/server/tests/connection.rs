@@ -64,3 +64,18 @@ fn empty_chat_is_ignored_by_server() {
 
     assert!(envelopes.is_empty());
 }
+
+#[test]
+fn server_announcements_are_broadcast_as_chat() {
+    let server = server();
+
+    let envelopes = server.announce("  restart soon  ");
+
+    assert_eq!(envelopes.len(), 1);
+    assert_eq!(envelopes[0].target, DeliveryTarget::Broadcast);
+    assert!(matches!(
+        &envelopes[0].message,
+        ServerMessage::Chat(ChatMessage { from, text })
+            if from == "Server" && text == "restart soon"
+    ));
+}

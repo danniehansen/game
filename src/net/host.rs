@@ -1,8 +1,11 @@
+#[cfg(unix)]
+mod admin;
 mod handle;
 mod routing;
 
 use std::{
     net::{Ipv4Addr, SocketAddr, UdpSocket},
+    path::PathBuf,
     sync::{Mutex, mpsc},
     thread,
     time::Duration,
@@ -22,6 +25,8 @@ use crate::{
     steam::AuthMode,
 };
 
+#[cfg(unix)]
+use self::admin::{HostAdminSocket, drain_admin_socket};
 pub(super) use self::handle::{GameServerHandle, SpawnedGameServer};
 use self::{
     handle::HostCommand,
@@ -82,6 +87,7 @@ pub(super) fn spawn_loopback_server(
                 save,
                 settings,
                 command_rx,
+                None,
                 false,
                 Some(startup_tx.clone()),
             ) {
@@ -120,6 +126,7 @@ pub(super) fn run_game_server(
     bind_addr: SocketAddr,
     save: WorldSave,
     auth_mode: AuthMode,
+    admin_socket: Option<PathBuf>,
 ) -> Result<WorldSave> {
     let reserved_addr = reserve_udp_addr(bind_addr)
         .with_context(|| format!("could not reserve Lightyear server address {bind_addr}"))?;
@@ -134,6 +141,7 @@ pub(super) fn run_game_server(
             singleplayer_host: None,
         },
         command_rx,
+        admin_socket,
         true,
         None,
     )
@@ -153,11 +161,28 @@ fn reserve_udp_addr(addr: SocketAddr) -> Result<ReservedUdpAddr> {
     })
 }
 
+#[cfg(unix)]
+fn install_admin_socket(app: &mut App, admin_socket: Option<PathBuf>) -> Result<()> {
+    if let Some(path) = admin_socket {
+        app.insert_resource(HostAdminSocket::bind(path)?);
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn install_admin_socket(_app: &mut App, admin_socket: Option<PathBuf>) -> Result<()> {
+    if admin_socket.is_some() {
+        bail!("dedicated server admin sockets require a Unix-like OS");
+    }
+    Ok(())
+}
+
 fn run_host(
     mut reserved_addr: ReservedUdpAddr,
     save: WorldSave,
     settings: ServerSettings,
     command_rx: mpsc::Receiver<HostCommand>,
+    admin_socket: Option<PathBuf>,
     install_terminal_shutdown: bool,
     mut startup_tx: Option<mpsc::Sender<std::result::Result<(), String>>>,
 ) -> Result<WorldSave> {
@@ -191,12 +216,26 @@ fn run_host(
     app.insert_resource(ServerConnections::default());
     app.insert_resource(TickAccumulator::default());
     app.insert_resource(HostShutdown::default());
+    install_admin_socket(&mut app, admin_socket)?;
 
     app.add_systems(Startup, move |mut commands: Commands| {
         commands.trigger(server::Start {
             entity: server_entity,
         });
     });
+    #[cfg(unix)]
+    app.add_systems(
+        Update,
+        (
+            drain_host_commands,
+            drain_admin_socket,
+            receive_client_messages,
+            handle_disconnected_clients,
+            tick_authoritative_server,
+        )
+            .chain(),
+    );
+    #[cfg(not(unix))]
     app.add_systems(
         Update,
         (

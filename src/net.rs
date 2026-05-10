@@ -4,7 +4,10 @@ mod host;
 mod protocol;
 
 pub use client::ClientSession;
-pub use dedicated::{DedicatedWorldPersistence, run_dedicated_server};
+pub use dedicated::{
+    DedicatedAdminRequest, DedicatedWorldPersistence, run_dedicated_server,
+    send_admin_request as send_dedicated_admin_request,
+};
 
 #[cfg(test)]
 mod tests;

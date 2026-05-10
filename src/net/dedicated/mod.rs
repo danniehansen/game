@@ -1,3 +1,5 @@
+mod admin;
+
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
@@ -8,6 +10,8 @@ use crate::{
 };
 
 use super::host::run_game_server;
+
+pub use admin::{DedicatedAdminRequest, DedicatedAdminResponse, send_admin_request};
 
 #[derive(Debug, Clone)]
 pub enum DedicatedWorldPersistence {
@@ -29,7 +33,8 @@ pub fn run_dedicated_server(
     save: WorldSave,
     auth_mode: AuthMode,
     persistence: DedicatedWorldPersistence,
+    admin_socket: Option<PathBuf>,
 ) -> Result<()> {
-    let final_save = run_game_server(bind_addr, save, auth_mode)?;
+    let final_save = run_game_server(bind_addr, save, auth_mode, admin_socket)?;
     persistence.save(&final_save)
 }

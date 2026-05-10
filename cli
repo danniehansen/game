@@ -51,6 +51,9 @@ case "$cmd" in
   server)
     cargo run --bin game -- server "$@"
     ;;
+  admin)
+    cargo run --bin game -- admin "$@"
+    ;;
   check)
     cargo check --all-targets
     ;;
@@ -93,6 +96,7 @@ Usage: ./cli <command> [args]
 Commands:
   dev          Close existing Game windows and run the Bevy client.
   server       Run a dedicated authoritative server. Pass --help after server for flags.
+  admin        Send an announcement or shutdown command to a dedicated server admin socket.
   check        Run cargo check for all targets.
   test         Run unit/integration tests.
   lint         Run rustfmt check and clippy with warnings denied.

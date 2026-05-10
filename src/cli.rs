@@ -5,9 +5,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::{
     app, net,
-    save::{WorldSave, WorldStore},
+    save::{WorldSave, WorldStore, save_world_file},
     steam::{AuthMode, OfflineSteamBackend, SteamBackend},
 };
+
+const DEFAULT_ADMIN_SOCKET: &str = "/run/game-server/admin.sock";
 
 #[derive(Debug, Parser)]
 #[command(name = "Game", version, about = "Game client and authoritative server")]
@@ -26,7 +28,24 @@ enum Command {
         world: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = AuthModeArg::Offline)]
         auth: AuthModeArg,
+        #[arg(long)]
+        admin_socket: Option<PathBuf>,
     },
+    Admin {
+        #[arg(long, default_value = DEFAULT_ADMIN_SOCKET)]
+        socket: PathBuf,
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AdminCommand {
+    Announce {
+        #[arg(required = true, num_args = 1.., trailing_var_arg = true)]
+        message: Vec<String>,
+    },
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -53,19 +72,37 @@ pub fn run() -> Result<()> {
     let args = Args::parse();
     match args.command.unwrap_or(Command::Client) {
         Command::Client => app::run_app(),
-        Command::Server { bind, world, auth } => {
+        Command::Server {
+            bind,
+            world,
+            auth,
+            admin_socket,
+        } => {
             let world = load_server_world(world)?;
-            net::run_dedicated_server(bind, world.save, auth.into(), world.persistence)
+            net::run_dedicated_server(
+                bind,
+                world.save,
+                auth.into(),
+                world.persistence,
+                admin_socket,
+            )
         }
+        Command::Admin { socket, command } => run_admin_command(socket, command),
     }
 }
 
 fn load_server_world(path: Option<PathBuf>) -> Result<ServerWorld> {
     if let Some(path) = path {
-        let json = std::fs::read_to_string(&path)
-            .with_context(|| format!("could not read world save {}", path.display()))?;
-        let save = serde_json::from_str(&json)
-            .with_context(|| format!("could not parse world save {}", path.display()))?;
+        let save = if path.exists() {
+            let json = std::fs::read_to_string(&path)
+                .with_context(|| format!("could not read world save {}", path.display()))?;
+            serde_json::from_str(&json)
+                .with_context(|| format!("could not parse world save {}", path.display()))?
+        } else {
+            let save = WorldSave::new("Dedicated File", None);
+            save_world_file(&path, &save)?;
+            save
+        };
         return Ok(ServerWorld {
             save,
             persistence: net::DedicatedWorldPersistence::File(path),
@@ -80,4 +117,17 @@ fn load_server_world(path: Option<PathBuf>) -> Result<ServerWorld> {
         save,
         persistence: net::DedicatedWorldPersistence::Store(store),
     })
+}
+
+fn run_admin_command(socket: PathBuf, command: AdminCommand) -> Result<()> {
+    let request = match command {
+        AdminCommand::Announce { message } => net::DedicatedAdminRequest::Announce {
+            text: message.join(" "),
+        },
+        AdminCommand::Shutdown => net::DedicatedAdminRequest::Shutdown,
+    };
+    let response = net::send_dedicated_admin_request(&socket, request)
+        .with_context(|| format!("could not send admin command to {}", socket.display()))?;
+    println!("{}", response.message);
+    Ok(())
 }

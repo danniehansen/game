@@ -124,6 +124,19 @@ impl GameServer {
         }
     }
 
+    pub fn announce(&self, text: impl AsRef<str>) -> Vec<ServerEnvelope> {
+        sanitize_chat(text.as_ref())
+            .map(|text| ServerEnvelope {
+                target: DeliveryTarget::Broadcast,
+                message: ServerMessage::Chat(ChatMessage {
+                    from: "Server".to_owned(),
+                    text,
+                }),
+            })
+            .into_iter()
+            .collect()
+    }
+
     pub fn tick(&mut self, delta_seconds: f32) -> Vec<ServerEnvelope> {
         self.tick += 1;
         self.save.state.last_authoritative_tick = self.tick;
