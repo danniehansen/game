@@ -35,6 +35,11 @@ enum AuthModeArg {
     Steam,
 }
 
+struct ServerWorld {
+    save: WorldSave,
+    persistence: net::DedicatedWorldPersistence,
+}
+
 impl From<AuthModeArg> for AuthMode {
     fn from(value: AuthModeArg) -> Self {
         match value {
@@ -49,21 +54,30 @@ pub fn run() -> Result<()> {
     match args.command.unwrap_or(Command::Client) {
         Command::Client => app::run_app(),
         Command::Server { bind, world, auth } => {
-            let save = load_server_world(world)?;
-            net::run_dedicated_server(bind, save, auth.into())
+            let world = load_server_world(world)?;
+            net::run_dedicated_server(bind, world.save, auth.into(), world.persistence)
         }
     }
 }
 
-fn load_server_world(path: Option<PathBuf>) -> Result<WorldSave> {
+fn load_server_world(path: Option<PathBuf>) -> Result<ServerWorld> {
     if let Some(path) = path {
         let json = std::fs::read_to_string(&path)
             .with_context(|| format!("could not read world save {}", path.display()))?;
-        return serde_json::from_str(&json)
-            .with_context(|| format!("could not parse world save {}", path.display()));
+        let save = serde_json::from_str(&json)
+            .with_context(|| format!("could not parse world save {}", path.display()))?;
+        return Ok(ServerWorld {
+            save,
+            persistence: net::DedicatedWorldPersistence::File(path),
+        });
     }
 
     let steam = OfflineSteamBackend;
     let user = steam.current_user()?;
-    WorldStore::platform_default()?.load_or_create_dedicated(Some(user.steam_id))
+    let store = WorldStore::platform_default()?;
+    let save = store.load_or_create_dedicated(Some(user.steam_id))?;
+    Ok(ServerWorld {
+        save,
+        persistence: net::DedicatedWorldPersistence::Store(store),
+    })
 }

@@ -93,9 +93,7 @@ impl WorldStore {
         self.ensure_exists()?;
 
         let path = self.world_path(save.id);
-        let json = serde_json::to_string_pretty(save).context("could not serialize world save")?;
-        write_file_atomically(&path, json.as_bytes())
-            .with_context(|| format!("could not write world {}", path.display()))
+        save_world_file(&path, save)
     }
 
     pub fn rename_world(&self, id: Uuid, name: &str) -> Result<WorldSave> {
@@ -132,6 +130,17 @@ impl WorldStore {
             .with_context(|| format!("could not read {}", path.display()))?;
         serde_json::from_str(&json).with_context(|| format!("could not parse {}", path.display()))
     }
+}
+
+pub fn save_world_file(path: &Path, save: &WorldSave) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("could not create world directory {}", parent.display()))?;
+    }
+
+    let json = serde_json::to_string_pretty(save).context("could not serialize world save")?;
+    write_file_atomically(path, json.as_bytes())
+        .with_context(|| format!("could not write world {}", path.display()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -355,6 +364,22 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn save_world_file_writes_custom_paths() {
+        let root = std::env::temp_dir().join(format!("game-save-file-test-{}", Uuid::new_v4()));
+        let path = root.join("nested").join("world.json");
+        let save = WorldSave::new("Dedicated File", Some(123));
+
+        save_world_file(&path, &save).expect("world file should save");
+
+        let json = fs::read_to_string(&path).expect("world file should exist");
+        let loaded: WorldSave = serde_json::from_str(&json).expect("world file should parse");
+        assert_eq!(loaded.id, save.id);
+        assert_eq!(loaded.name, "Dedicated File");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

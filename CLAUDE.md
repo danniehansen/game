@@ -2,20 +2,37 @@
 
 AI context for this repo.
 
-Game is a Rust/Bevy first-person prototype. Local singleplayer uses an in-process server; the dedicated Lightyear server path is experimental and server-side first; worlds are JSON saves.
+Game is a Rust/Bevy first-person prototype. Singleplayer and multiplayer both use the Lightyear-backed `ClientSession::Network` path; singleplayer only adds loopback host startup, host admin assignment, and local save persistence. Worlds are JSON saves.
 
 Start here:
 - `src/cli.rs`: commands.
 - `src/app.rs`: Bevy app wiring.
 - `src/app/state/`: client resources and UI/runtime state.
 - `src/app/ui/worlds/`: singleplayer worlds screen, dialogs, table, and session actions.
-- `src/server.rs`: authoritative game state.
+- `src/server.rs` and `src/server/`: shared authoritative game state for both singleplayer loopback and dedicated multiplayer; keep connection/auth/snapshot, inventory, movement, and dropped-item concerns split.
 - `src/protocol.rs`: wire messages and shared state.
 - `src/controller/`: movement simulation, movement tuning/math, and collision.
-- `src/net/dedicated/`: Lightyear dedicated server app, transport, connection spawning, movement, and replicated components.
+- `src/net/client.rs`: Lightyear client session wrapper used by singleplayer and direct multiplayer.
+- `src/net/host.rs` and `src/net/host/`: Lightyear host wrapper, handle/shutdown helpers, and routing around `GameServer`, used by loopback singleplayer and dedicated server.
+- `src/net/dedicated/`: CLI-facing dedicated server entry point.
 - `src/save.rs`: world persistence.
 
 Use `./cli check`, `./cli test`, and `./cli lint`.
+
+Singleplayer/multiplayer invariant:
+- Keep gameplay behavior in shared modules: `server`, `protocol`, `controller`, `items`, `world`, and shared app systems.
+- Do not add a separate singleplayer gameplay implementation, direct in-process transport bypass, or duplicate movement/inventory/chat rules for local play.
+- Singleplayer-specific code should stay limited to selecting/loading a save, starting a loopback host, marking the local host as admin, and saving the host world state on shutdown.
+- Multiplayer-specific code should stay limited to remote address/server discovery, auth mode, transport setup, and dedicated-host lifecycle.
+- When adding a feature, make it work through `ClientMessage`/`ServerMessage` and `GameServer` first, then let both loopback singleplayer and direct multiplayer consume that same path.
+
+Clean-code rules:
+- No monolithic files. If a file mixes transport, domain rules, UI layout, persistence, and tests, split by concern before extending it.
+- Prefer small modules with clear ownership over broad helper files. Good splits already exist in `src/server/`, `src/controller/`, `src/app/systems/`, `src/app/state/`, and `src/app/ui/worlds/`.
+- Keep UI rendering, UI state, session actions, and authoritative game rules separate.
+- Keep networking transport adapters thin; they should translate to shared protocol messages and delegate gameplay to `GameServer`.
+- Add tests near the module that owns the behavior, especially for protocol changes, server authority, persistence, and layout/state helpers.
+- Update the relevant existing doc when changing architecture. Do not create markdown summary files unless explicitly asked.
 
 Open docs only when the task touches that area:
 - [Architecture](docs/architecture.md)
@@ -24,4 +41,4 @@ Open docs only when the task touches that area:
 - [Worlds and saves](docs/worlds-and-saves.md)
 - [UI and client flow](docs/ui-and-client.md)
 
-Keep changes small, preserve module boundaries, and do not add markdown summaries unless asked.
+Keep changes small and preserve module boundaries.

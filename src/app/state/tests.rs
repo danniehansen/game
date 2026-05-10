@@ -175,6 +175,7 @@ fn menu_and_confirmation_defaults_match_initial_ui_state() {
     assert_eq!(menu.screen, Screen::MainMenu);
     assert!(menu.create_world.is_none());
     assert!(menu.edit_world.is_none());
+    assert!(menu.direct_connect.is_none());
     assert_eq!(menu.multiplayer_addr, "127.0.0.1:7777");
     assert!(!menu.pause_open);
     assert!(!menu.pause_options_open);
@@ -193,6 +194,19 @@ fn menu_and_confirmation_defaults_match_initial_ui_state() {
     ));
     assert!(!dialog.closing);
     assert!(!dialog.confirmed);
+}
+
+#[test]
+fn direct_connect_dialog_separates_address_and_port() {
+    let dialog = DirectConnectDialog::new("127.0.0.1:7777");
+    assert_eq!(dialog.host, "127.0.0.1");
+    assert_eq!(dialog.port, "7777");
+    assert!(dialog.error.is_none());
+    assert!(!dialog.closing);
+
+    let fallback = DirectConnectDialog::new("example.invalid");
+    assert_eq!(fallback.host, "example.invalid");
+    assert_eq!(fallback.port, "7777");
 }
 
 #[test]

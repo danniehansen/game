@@ -36,6 +36,26 @@ pub(crate) enum ConfirmationAction {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct DirectConnectDialog {
+    pub(crate) host: String,
+    pub(crate) port: String,
+    pub(crate) error: Option<String>,
+    pub(crate) closing: bool,
+}
+
+impl DirectConnectDialog {
+    pub(crate) fn new(address: &str) -> Self {
+        let (host, port) = split_host_port(address);
+        Self {
+            host,
+            port,
+            error: None,
+            closing: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct CreateWorldDialog {
     pub(crate) name: String,
     pub(crate) map_kind: CreateWorldMapKind,
@@ -122,4 +142,19 @@ fn random_seed() -> u64 {
     u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ])
+}
+
+fn split_host_port(address: &str) -> (String, String) {
+    match address.parse::<std::net::SocketAddr>() {
+        Ok(addr) => (addr.ip().to_string(), addr.port().to_string()),
+        Err(_) => address
+            .rsplit_once(':')
+            .map(|(host, port)| {
+                (
+                    host.trim_matches(['[', ']']).trim().to_owned(),
+                    port.trim().to_owned(),
+                )
+            })
+            .unwrap_or_else(|| (address.trim().to_owned(), "7777".to_owned())),
+    }
 }

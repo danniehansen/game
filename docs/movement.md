@@ -4,9 +4,10 @@
 
 Flow:
 - Client builds `PlayerInput` from WASD, shift, space, and mouse look.
-- Local singleplayer predicts locally, sends `PlayerMovement` through direct in-process messages, and receives snapshots/corrections from `GameServer`.
-- The Lightyear dedicated server registers native inputs and replicated player components.
-- The Lightyear dedicated server simulates authoritative player controllers from `NetworkInput`.
+- The client predicts locally with `PlayerController`, then sends `PlayerMovement` through the shared `ClientSession::Network` path.
+- Loopback singleplayer and direct multiplayer use the same Lightyear client/host message flow.
+- `GameServer` accepts newer finite movement states, normalizes/clamps view angles, and broadcasts authoritative snapshots.
+- Future movement authority changes should happen in `PlayerController`, `ClientMessage`/`ServerMessage`, and `GameServer` so singleplayer and multiplayer keep exercising the same code.
 
 Movement lives in `src/controller/`:
 - `mod.rs`: `PlayerController`, fixed-step simulation, jumping, coyote time, reconciliation, and step-up handling.

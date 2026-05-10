@@ -62,7 +62,7 @@ fn singleplayer_session_connects_through_loopback_server() {
 }
 
 #[test]
-fn singleplayer_session_receives_authoritative_snapshots_without_inprocess_tick() {
+fn singleplayer_session_receives_authoritative_snapshots_from_loopback_host() {
     let mut session = start_session();
     let _ = session.tick(0.0);
 

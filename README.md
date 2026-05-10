@@ -1,6 +1,6 @@
 # Game
 
-Rust/Bevy first-person game prototype with local singleplayer, JSON world saves, and an experimental Lightyear dedicated server path.
+Rust/Bevy first-person game prototype with loopback singleplayer, direct UDP multiplayer, JSON world saves, and a Lightyear host/client path shared by both play modes.
 
 ## Run
 
@@ -13,11 +13,10 @@ Rust/Bevy first-person game prototype with local singleplayer, JSON world saves,
 ## Shape
 
 - Client: Bevy scene, egui menus/HUD/chat, local prediction.
-- Local server: auth, sessions, chat, admin state, snapshots.
-- Dedicated server: headless Lightyear replication over UDP/netcode, with Steam transport available behind `--features steam`.
+- Shared server: auth, sessions, movement state acceptance, inventory, dropped items, chat, admin state, snapshots.
+- Networking: singleplayer starts a loopback Lightyear host; direct multiplayer connects to the same host path over UDP/netcode.
 - Movement: shared first-person controller with collision, jump buffering, coyote time.
-- Client networking: playable client sessions are local-only while the Lightyear client path is still being wired.
-- Worlds: platform-local JSON saves backed by generated world data.
+- Worlds: platform-local JSON saves backed by generated world data; loopback and dedicated hosts persist final save state on graceful shutdown.
 - Audio: runtime audio uses WAV assets for reliable Bevy/rodio playback; main-menu ambience loops until a world loads, and egui buttons emit click/hover one-shots.
 - Steam: offline dev backend now; `steam` feature is the transport integration hook.
 

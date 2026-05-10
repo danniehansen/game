@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{save::WorldStore, steam::AuthenticatedUser};
 
-use super::{ConfirmationDialog, CreateWorldDialog, EditWorldDialog};
+use super::{ConfirmationDialog, CreateWorldDialog, DirectConnectDialog, EditWorldDialog};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Screen {
@@ -31,6 +31,7 @@ pub(crate) struct MenuState {
     pub(crate) worlds: Vec<crate::save::WorldSummary>,
     pub(crate) create_world: Option<CreateWorldDialog>,
     pub(crate) edit_world: Option<EditWorldDialog>,
+    pub(crate) direct_connect: Option<DirectConnectDialog>,
     pub(crate) multiplayer_addr: String,
     pub(crate) status: Option<String>,
     pub(crate) pause_open: bool,
@@ -50,6 +51,7 @@ impl Default for MenuState {
             worlds: Vec::new(),
             create_world: None,
             edit_world: None,
+            direct_connect: None,
             multiplayer_addr: "127.0.0.1:7777".to_owned(),
             status: None,
             pause_open: false,

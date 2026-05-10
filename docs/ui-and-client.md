@@ -2,7 +2,7 @@
 
 `src/app.rs` wires the Bevy app. `src/app/ui` draws menus, worlds, HUD, pause, chat, confirmation, and multiplayer views.
 
-Screens live in `MenuState`: `MainMenu`, `Worlds`, `Multiplayer`, `InGame`. Multiplayer UI exists, but the main-menu entry is gated as coming soon.
+Screens live in `MenuState`: `MainMenu`, `Worlds`, `Multiplayer`, `Options`, `InGame`. The multiplayer screen supports direct UDP connect through the same `ClientSession` runtime used by singleplayer.
 
 Client resources live in `src/app/state/`:
 - `menu.rs`: screen selection and menu flags.
@@ -16,6 +16,8 @@ The singleplayer worlds UI lives in `src/app/ui/worlds/`:
 - `table.rs`: worlds list layout and row actions.
 - `dialogs/`: create/edit world modals and shared form helpers.
 - `session.rs`: refresh world list and start singleplayer.
+
+Starting singleplayer should only select/load a save and call `ClientSession::start_singleplayer`; the resulting runtime must behave like multiplayer after connection. Do not add UI-side gameplay branches that treat local worlds differently after the session starts.
 
 Input systems:
 - Enter/T opens chat.

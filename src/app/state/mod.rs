@@ -10,7 +10,8 @@ mod tests;
 
 pub(crate) use backdrop::MenuBackdropVisibility;
 pub(crate) use dialogs::{
-    ConfirmationAction, ConfirmationDialog, CreateWorldDialog, CreateWorldMapKind, EditWorldDialog,
+    ConfirmationAction, ConfirmationDialog, CreateWorldDialog, CreateWorldMapKind,
+    DirectConnectDialog, EditWorldDialog,
 };
 pub(crate) use inventory::{
     InventoryDrag, InventoryDragButton, InventoryUiState, PickupTargetState,
