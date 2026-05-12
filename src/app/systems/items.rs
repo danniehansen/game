@@ -5,12 +5,21 @@ use bevy::prelude::*;
 use crate::{
     app::{
         EYE_HEIGHT,
-        scene::{HeldItemVisual, ItemVisualAssets, MainCamera, NetworkDroppedItem},
-        state::{ClientRuntime, LookState, MenuState, PickupTargetState, Screen},
+        scene::{
+            HeldItemVisual, ItemVisualAssets, MainCamera, NetworkDroppedItem, NetworkResourceNode,
+            ResourceVisualAssets,
+        },
+        state::{ClientRuntime, GatherInputState, LookState, MenuState, PickupTargetState, Screen},
     },
-    items::{best_pickup_target, item_definition, pickup_anchor, pickup_anchor_from_position},
-    protocol::{DroppedWorldItem, QuatNet},
+    items::{ItemModel, item_definition, pickup_anchor, pickup_anchor_from_position, pickup_score},
+    protocol::{DroppedWorldItem, QuatNet, ResourceNodeState},
+    resources::{
+        ResourceNodeModel, best_resource_node_target, resource_node_anchor,
+        resource_node_definition,
+    },
 };
+
+use std::f32::consts::PI;
 
 const HELD_ITEM_FORWARD_OFFSET: f32 = 0.62;
 const HELD_ITEM_RIGHT_OFFSET: f32 = 0.28;
@@ -68,6 +77,55 @@ pub(crate) fn apply_dropped_items_system(
             .dropped_items
             .iter()
             .any(|item| item.id == dropped.id)
+        {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+pub(crate) fn apply_resource_nodes_system(
+    mut commands: Commands,
+    runtime: Res<ClientRuntime>,
+    assets: Res<ResourceVisualAssets>,
+    resource_entities: Query<(Entity, &NetworkResourceNode)>,
+) {
+    let Some(snapshot) = &runtime.snapshot else {
+        for (entity, _) in &resource_entities {
+            commands.entity(entity).despawn();
+        }
+        return;
+    };
+
+    let existing = resource_entities
+        .iter()
+        .map(|(entity, resource)| (resource.id, entity))
+        .collect::<HashMap<_, _>>();
+
+    for node in &snapshot.resource_nodes {
+        let Some(definition) = resource_node_definition(&node.definition_id) else {
+            continue;
+        };
+        let transform = resource_node_transform(node, definition.model);
+        if let Some(entity) = existing.get(&node.id) {
+            commands.entity(*entity).insert((transform,));
+        } else {
+            let (mesh, material) = resource_node_visual(&assets, node, definition.model);
+            commands.spawn((
+                Name::new(format!("Resource Node {}", node.id)),
+                NetworkResourceNode { id: node.id },
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                transform,
+                Visibility::Visible,
+            ));
+        }
+    }
+
+    for (entity, resource) in &resource_entities {
+        if !snapshot
+            .resource_nodes
+            .iter()
+            .any(|node| node.id == resource.id)
         {
             commands.entity(entity).despawn();
         }
@@ -141,12 +199,37 @@ pub(crate) fn update_pickup_target_system(
     let eye = player
         .position
         .plus(crate::protocol::Vec3Net::new(0.0, EYE_HEIGHT, 0.0));
-    let Some(item) = best_pickup_target(eye, look.yaw, look.pitch, snapshot.dropped_items.iter())
-    else {
-        pickup_target.clear();
-        return;
-    };
+    let dropped_target = snapshot
+        .dropped_items
+        .iter()
+        .filter_map(|item| pickup_score(eye, look.yaw, look.pitch, item).map(|score| (item, score)))
+        .min_by(|(_, a), (_, b)| a.total_cmp(b));
+    let resource_target =
+        best_resource_node_target(eye, look.yaw, look.pitch, snapshot.resource_nodes.iter());
 
+    match (dropped_target, resource_target) {
+        (Some((item, item_score)), Some((_, node_score))) if item_score <= node_score => {
+            set_dropped_pickup_target(&mut pickup_target, item, &camera, &dropped_entities);
+        }
+        (Some((item, _)), None) => {
+            set_dropped_pickup_target(&mut pickup_target, item, &camera, &dropped_entities);
+        }
+        (_, Some((node, _))) => {
+            set_resource_pickup_target(&mut pickup_target, node, &camera);
+        }
+        (None, None) => {
+            pickup_target.clear();
+        }
+    }
+}
+
+fn set_dropped_pickup_target(
+    pickup_target: &mut PickupTargetState,
+    item: &DroppedWorldItem,
+    camera: &Query<(&Camera, &Transform), With<MainCamera>>,
+    dropped_entities: &Query<(&NetworkDroppedItem, &Transform)>,
+) {
+    pickup_target.clear();
     pickup_target.dropped_item_id = Some(item.id);
     pickup_target.stack = Some(item.stack.clone());
     let anchor = dropped_entities
@@ -161,14 +244,35 @@ pub(crate) fn update_pickup_target_system(
         })
         .unwrap_or_else(|| pickup_anchor(item));
     pickup_target.world_position = Some(anchor);
-    pickup_target.screen_position = camera.single().ok().and_then(|(camera, camera_transform)| {
+    pickup_target.screen_position = viewport_position(camera, anchor);
+}
+
+fn set_resource_pickup_target(
+    pickup_target: &mut PickupTargetState,
+    node: &ResourceNodeState,
+    camera: &Query<(&Camera, &Transform), With<MainCamera>>,
+) {
+    pickup_target.clear();
+    pickup_target.resource_node_id = Some(node.id);
+    pickup_target.resource_definition_id = Some(node.definition_id.clone());
+    pickup_target.resource_storage = node.storage.clone();
+    let anchor = resource_node_anchor(node);
+    pickup_target.world_position = Some(anchor);
+    pickup_target.screen_position = viewport_position(camera, anchor);
+}
+
+fn viewport_position(
+    camera: &Query<(&Camera, &Transform), With<MainCamera>>,
+    anchor: crate::protocol::Vec3Net,
+) -> Option<Vec2> {
+    camera.single().ok().and_then(|(camera, camera_transform)| {
         camera
             .world_to_viewport(
                 &GlobalTransform::from(*camera_transform),
                 Vec3::new(anchor.x, anchor.y, anchor.z),
             )
             .ok()
-    });
+    })
 }
 
 pub(crate) fn apply_held_item_visual_system(
@@ -176,42 +280,53 @@ pub(crate) fn apply_held_item_visual_system(
     runtime: Res<ClientRuntime>,
     menu: Res<MenuState>,
     assets: Res<ItemVisualAssets>,
-    camera: Query<&Transform, With<MainCamera>>,
-    held: Query<Entity, With<HeldItemVisual>>,
+    gather_input: Res<GatherInputState>,
+    camera: Query<Entity, With<MainCamera>>,
+    held: Query<(Entity, &HeldItemVisual)>,
 ) {
-    let should_show = menu.screen == Screen::InGame
-        && !menu.pause_open
-        && runtime
-            .local_player()
-            .and_then(|player| {
-                player
-                    .inventory
-                    .active_actionbar_stack()
-                    .and_then(|stack| item_definition(&stack.item_id))
+    let active_item = (menu.screen == Screen::InGame && !menu.pause_open)
+        .then(|| {
+            runtime.local_player().and_then(|player| {
+                player.inventory.active_actionbar_stack().and_then(|stack| {
+                    item_definition(&stack.item_id)
+                        .map(|definition| (stack.item_id.clone(), definition))
+                })
             })
-            .is_some_and(|definition| definition.equipable);
+        })
+        .flatten();
 
-    if !should_show {
-        for entity in &held {
+    let Some((item_id, definition)) = active_item.filter(|(_, definition)| definition.equipable)
+    else {
+        for (entity, _) in &held {
             commands.entity(entity).despawn();
         }
         return;
-    }
+    };
 
-    let Ok(camera_transform) = camera.single() else {
+    let Ok(camera_entity) = camera.single() else {
         return;
     };
-    let transform = held_item_transform(camera_transform);
-    if let Some(entity) = held.iter().next() {
-        commands
-            .entity(entity)
-            .insert((transform, Visibility::Visible));
+    let transform = held_item_local_transform(definition.model, gather_input.swing_fraction());
+    let (mesh, material) = held_item_visual(&assets, definition.model);
+    if let Some((entity, held_visual)) = held.iter().next() {
+        let mut entity_commands = commands.entity(entity);
+        entity_commands.insert((ChildOf(camera_entity), transform, Visibility::Visible));
+        if held_visual.item_id != item_id {
+            entity_commands.insert((
+                HeldItemVisual {
+                    item_id: item_id.clone(),
+                },
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+            ));
+        }
     } else {
         commands.spawn((
             Name::new("Held Item"),
-            HeldItemVisual,
-            Mesh3d(assets.held_mesh.clone()),
-            MeshMaterial3d(assets.held_material.clone()),
+            HeldItemVisual { item_id },
+            ChildOf(camera_entity),
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
             transform,
             Visibility::Visible,
         ));
@@ -238,17 +353,220 @@ fn dropped_item_rotation(rotation: QuatNet, fallback_yaw: f32) -> Quat {
     }
 }
 
-fn held_item_transform(camera_transform: &Transform) -> Transform {
-    let forward = camera_transform.rotation.mul_vec3(Vec3::NEG_Z);
-    let right = camera_transform.rotation.mul_vec3(Vec3::X);
-    let up = camera_transform.rotation.mul_vec3(Vec3::Y);
-    let translation = camera_transform.translation
-        + forward * HELD_ITEM_FORWARD_OFFSET
-        + right * HELD_ITEM_RIGHT_OFFSET
-        - up * HELD_ITEM_DOWN_OFFSET;
-    Transform::from_translation(translation).with_rotation(
-        camera_transform.rotation * Quat::from_euler(EulerRot::XYZ, -0.35, 0.25, 0.18),
+fn resource_node_transform(node: &ResourceNodeState, model: ResourceNodeModel) -> Transform {
+    let (height_offset, scale) = match model {
+        ResourceNodeModel::CoalOre => (0.34, Vec3::new(1.0, 1.0, 1.0)),
+        ResourceNodeModel::IronOre => (0.36, Vec3::new(1.1, 1.05, 0.95)),
+        ResourceNodeModel::SulfurOre => (0.32, Vec3::new(0.96, 0.92, 1.06)),
+        ResourceNodeModel::PineTree => (0.0, Vec3::new(1.0, 1.16, 1.0)),
+        ResourceNodeModel::BirchTree => (0.0, Vec3::new(0.82, 1.0, 0.82)),
+        ResourceNodeModel::DeadTree => (0.0, Vec3::new(0.72, 0.86, 0.72)),
+    };
+    Transform::from_xyz(
+        node.position.x,
+        node.position.y + height_offset,
+        node.position.z,
     )
+    .with_rotation(Quat::from_rotation_y(node.yaw))
+    .with_scale(scale)
+}
+
+fn resource_node_visual(
+    assets: &ResourceVisualAssets,
+    node: &ResourceNodeState,
+    model: ResourceNodeModel,
+) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    match model {
+        ResourceNodeModel::CoalOre => (
+            ore_mesh_variant(assets, node.id),
+            assets.coal_material.clone(),
+        ),
+        ResourceNodeModel::IronOre => (
+            ore_mesh_variant(assets, node.id),
+            assets.iron_material.clone(),
+        ),
+        ResourceNodeModel::SulfurOre => (
+            ore_mesh_variant(assets, node.id),
+            assets.sulfur_material.clone(),
+        ),
+        ResourceNodeModel::PineTree => (
+            assets.pine_tree_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::BirchTree => (
+            assets.birch_tree_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::DeadTree => (
+            assets.dead_tree_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+    }
+}
+
+fn ore_mesh_variant(assets: &ResourceVisualAssets, node_id: u64) -> Handle<Mesh> {
+    match node_id % 3 {
+        0 => assets.ore_mesh_low.clone(),
+        1 => assets.ore_mesh_ridge.clone(),
+        _ => assets.ore_mesh_cluster.clone(),
+    }
+}
+
+fn held_item_visual(
+    assets: &ItemVisualAssets,
+    model: ItemModel,
+) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    match model {
+        ItemModel::Bag => (
+            assets.held_bag_mesh.clone(),
+            assets.held_bag_material.clone(),
+        ),
+        ItemModel::Hatchet => (
+            assets.held_hatchet_mesh.clone(),
+            assets.held_tool_material.clone(),
+        ),
+        ItemModel::Pickaxe => (
+            assets.held_pickaxe_mesh.clone(),
+            assets.held_tool_material.clone(),
+        ),
+    }
+}
+
+fn held_item_local_transform(model: ItemModel, swing_fraction: f32) -> Transform {
+    let phase = swing_fraction.clamp(0.0, 1.0);
+    let model_down_offset = match model {
+        ItemModel::Bag => HELD_ITEM_DOWN_OFFSET,
+        ItemModel::Hatchet | ItemModel::Pickaxe => HELD_ITEM_DOWN_OFFSET - 0.03,
+    };
+
+    let (swing_translation, base_rotation, model_rotation) = match model {
+        ItemModel::Bag => {
+            let swing = (phase * PI).sin();
+            let windup = (0.5 - phase).max(0.0) * 0.28;
+            (
+                Vec3::NEG_Z * (swing * 0.06) - Vec3::Y * (swing * 0.05),
+                Quat::from_euler(
+                    EulerRot::XYZ,
+                    -0.35 + windup - swing * 0.9,
+                    0.25 + swing * 0.12,
+                    0.18 - swing * 0.18,
+                ),
+                Quat::IDENTITY,
+            )
+        }
+        ItemModel::Hatchet => {
+            let pose = hatchet_swing_pose(phase);
+            (
+                Vec3::NEG_Z * pose.forward + Vec3::X * pose.right + Vec3::Y * pose.up,
+                Quat::from_euler(EulerRot::XYZ, pose.pitch, pose.yaw, pose.roll),
+                Quat::IDENTITY,
+            )
+        }
+        ItemModel::Pickaxe => {
+            let pose = pickaxe_swing_pose(phase);
+            (
+                Vec3::NEG_Z * pose.forward + Vec3::X * pose.right + Vec3::Y * pose.up,
+                Quat::from_euler(EulerRot::XYZ, pose.pitch, pose.yaw, pose.roll),
+                Quat::from_rotation_y(PI * 0.5),
+            )
+        }
+    };
+
+    let translation = Vec3::NEG_Z * HELD_ITEM_FORWARD_OFFSET + Vec3::X * HELD_ITEM_RIGHT_OFFSET
+        - Vec3::Y * model_down_offset
+        + swing_translation;
+    Transform::from_translation(translation).with_rotation(base_rotation * model_rotation)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ToolSwingPose {
+    pitch: f32,
+    yaw: f32,
+    roll: f32,
+    forward: f32,
+    right: f32,
+    up: f32,
+}
+
+fn hatchet_swing_pose(phase: f32) -> ToolSwingPose {
+    if phase <= 0.34 {
+        let t = smoothstep(phase / 0.34);
+        return ToolSwingPose {
+            pitch: lerp(-0.34, -0.20, t),
+            yaw: lerp(0.22, -0.86, t),
+            roll: lerp(0.06, 0.82, t),
+            forward: lerp(0.0, -0.04, t),
+            right: lerp(0.0, 0.06, t),
+            up: lerp(0.0, 0.05, t),
+        };
+    }
+
+    if phase <= 0.56 {
+        let t = smoothstep((phase - 0.34) / 0.22);
+        return ToolSwingPose {
+            pitch: lerp(-0.20, -0.58, t),
+            yaw: lerp(-0.86, 0.34, t),
+            roll: lerp(0.82, 0.50, t),
+            forward: lerp(-0.04, 0.06, t),
+            right: lerp(0.06, -0.10, t),
+            up: lerp(0.05, -0.06, t),
+        };
+    }
+
+    let t = smoothstep((phase - 0.56) / 0.44);
+    ToolSwingPose {
+        pitch: lerp(-0.58, -0.34, t),
+        yaw: lerp(0.34, 0.22, t),
+        roll: lerp(0.50, 0.06, t),
+        forward: lerp(0.06, 0.0, t),
+        right: lerp(-0.10, 0.0, t),
+        up: lerp(-0.06, 0.0, t),
+    }
+}
+
+fn pickaxe_swing_pose(phase: f32) -> ToolSwingPose {
+    if phase <= 0.34 {
+        let t = smoothstep(phase / 0.34);
+        return ToolSwingPose {
+            pitch: lerp(-0.34, 0.72, t),
+            yaw: lerp(0.16, 0.04, t),
+            roll: lerp(0.04, 0.12, t),
+            forward: lerp(0.0, -0.09, t),
+            right: lerp(0.0, 0.02, t),
+            up: lerp(0.0, 0.14, t),
+        };
+    }
+
+    if phase <= 0.54 {
+        let t = smoothstep((phase - 0.34) / 0.20);
+        return ToolSwingPose {
+            pitch: lerp(0.72, -1.44, t),
+            yaw: lerp(0.04, 0.10, t),
+            roll: lerp(0.12, -0.14, t),
+            forward: lerp(-0.09, 0.18, t),
+            right: lerp(0.02, -0.01, t),
+            up: lerp(0.14, -0.13, t),
+        };
+    }
+
+    let t = smoothstep((phase - 0.54) / 0.46);
+    ToolSwingPose {
+        pitch: lerp(-1.44, -0.34, t),
+        yaw: lerp(0.10, 0.16, t),
+        roll: lerp(-0.14, 0.04, t),
+        forward: lerp(0.18, 0.0, t),
+        right: lerp(-0.01, 0.0, t),
+        up: lerp(-0.13, 0.0, t),
+    }
+}
+
+fn smoothstep(value: f32) -> f32 {
+    let t = value.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn lerp(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
 }
 
 #[cfg(test)]
@@ -280,5 +598,34 @@ mod tests {
         let corrected = interpolation.advance(0.0);
 
         assert_eq!(corrected.translation, target.translation);
+    }
+
+    #[test]
+    fn hatchet_swing_pose_sweeps_across_the_body() {
+        let ready = hatchet_swing_pose(0.0);
+        let windup = hatchet_swing_pose(0.34);
+        let impact = hatchet_swing_pose(0.54);
+
+        assert!(windup.right < ready.right + 0.08);
+        assert!(windup.forward > ready.forward - 0.06);
+        assert!(impact.right < windup.right - 0.14);
+        assert!(windup.yaw < ready.yaw - 1.0);
+        assert!(impact.yaw > windup.yaw + 1.1);
+        assert!(impact.forward < windup.forward + 0.12);
+        assert!(impact.roll > windup.roll - 0.40);
+    }
+
+    #[test]
+    fn pickaxe_swing_pose_stays_centered_for_vertical_strike() {
+        let ready = pickaxe_swing_pose(0.0);
+        let windup = pickaxe_swing_pose(0.34);
+        let impact = pickaxe_swing_pose(0.50);
+
+        assert!(windup.up > ready.up + 0.12);
+        assert!(impact.up < ready.up - 0.09);
+        assert!(windup.pitch > ready.pitch + 1.0);
+        assert!(impact.pitch < windup.pitch - 1.8);
+        assert!(windup.right.abs() < 0.03);
+        assert!(impact.right.abs() < 0.03);
     }
 }

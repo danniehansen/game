@@ -15,7 +15,7 @@ pub(crate) use dialogs::{
     WorldStartAttempt, WorldStartResult,
 };
 pub(crate) use inventory::{
-    InventoryDrag, InventoryDragButton, InventoryUiState, PickupTargetState,
+    GatherInputState, InventoryDrag, InventoryDragButton, InventoryUiState, PickupTargetState,
 };
 pub(crate) use look::LookState;
 pub(crate) use menu::{MenuState, SaveStore, Screen, SteamUser};

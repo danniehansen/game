@@ -114,6 +114,7 @@ mod tests {
                     player(2, 2, Vec3Net::new(2.0, 0.0, 0.0), 1.0),
                 ],
                 dropped_items: Vec::new(),
+                resource_nodes: Vec::new(),
             }),
             Some(1),
         );
@@ -135,6 +136,7 @@ mod tests {
             tick: 2,
             players: vec![player(2, 2, Vec3Net::new(4.0, 0.0, 0.0), 0.5)],
             dropped_items: Vec::new(),
+            resource_nodes: Vec::new(),
         });
         app.update();
 

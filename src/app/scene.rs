@@ -6,7 +6,7 @@ use bevy::{
 };
 
 use crate::{
-    protocol::{ClientId, DroppedItemId},
+    protocol::{ClientId, DroppedItemId, ResourceNodeId},
     world::WorldData,
 };
 
@@ -19,6 +19,10 @@ const REMOTE_PLAYER_COLOR: Color = Color::srgb(0.95, 0.61, 0.25);
 const WORLD_COLOR: Color = Color::srgb(0.18, 0.34, 0.22);
 const DROPPED_BAG_COLOR: Color = Color::srgb(0.42, 0.31, 0.18);
 const HELD_BAG_COLOR: Color = Color::srgb(0.50, 0.38, 0.24);
+const VERTEX_MATERIAL_COLOR: Color = Color::WHITE;
+const COAL_NODE_COLOR: Color = Color::srgb(0.08, 0.09, 0.10);
+const IRON_NODE_COLOR: Color = Color::srgb(0.48, 0.34, 0.27);
+const SULFUR_NODE_COLOR: Color = Color::srgb(0.73, 0.62, 0.19);
 
 #[derive(Resource, Default)]
 pub(crate) struct WorldSceneState {
@@ -34,9 +38,26 @@ pub(crate) struct PlayerVisualAssets {
 #[derive(Resource, Clone)]
 pub(crate) struct ItemVisualAssets {
     pub(crate) dropped_mesh: Handle<Mesh>,
-    pub(crate) held_mesh: Handle<Mesh>,
+    pub(crate) held_bag_mesh: Handle<Mesh>,
+    pub(crate) held_hatchet_mesh: Handle<Mesh>,
+    pub(crate) held_pickaxe_mesh: Handle<Mesh>,
     pub(crate) dropped_material: Handle<StandardMaterial>,
-    pub(crate) held_material: Handle<StandardMaterial>,
+    pub(crate) held_bag_material: Handle<StandardMaterial>,
+    pub(crate) held_tool_material: Handle<StandardMaterial>,
+}
+
+#[derive(Resource, Clone)]
+pub(crate) struct ResourceVisualAssets {
+    pub(crate) ore_mesh_low: Handle<Mesh>,
+    pub(crate) ore_mesh_ridge: Handle<Mesh>,
+    pub(crate) ore_mesh_cluster: Handle<Mesh>,
+    pub(crate) pine_tree_mesh: Handle<Mesh>,
+    pub(crate) birch_tree_mesh: Handle<Mesh>,
+    pub(crate) dead_tree_mesh: Handle<Mesh>,
+    pub(crate) coal_material: Handle<StandardMaterial>,
+    pub(crate) iron_material: Handle<StandardMaterial>,
+    pub(crate) sulfur_material: Handle<StandardMaterial>,
+    pub(crate) vertex_material: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -50,7 +71,14 @@ pub(crate) struct NetworkDroppedItem {
 }
 
 #[derive(Component)]
-pub(crate) struct HeldItemVisual;
+pub(crate) struct NetworkResourceNode {
+    pub(crate) id: ResourceNodeId,
+}
+
+#[derive(Component)]
+pub(crate) struct HeldItemVisual {
+    pub(crate) item_id: String,
+}
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
@@ -99,15 +127,50 @@ pub(crate) fn setup_scene(
     });
     commands.insert_resource(ItemVisualAssets {
         dropped_mesh: meshes.add(low_poly_bag_mesh()),
-        held_mesh: meshes.add(Cuboid::new(0.26, 0.22, 0.34)),
+        held_bag_mesh: meshes.add(Cuboid::new(0.26, 0.22, 0.34)),
+        held_hatchet_mesh: meshes.add(low_poly_hatchet_mesh()),
+        held_pickaxe_mesh: meshes.add(low_poly_pickaxe_mesh()),
         dropped_material: materials.add(StandardMaterial {
             base_color: DROPPED_BAG_COLOR,
             perceptual_roughness: 0.95,
             ..default()
         }),
-        held_material: materials.add(StandardMaterial {
+        held_bag_material: materials.add(StandardMaterial {
             base_color: HELD_BAG_COLOR,
             perceptual_roughness: 0.88,
+            ..default()
+        }),
+        held_tool_material: materials.add(StandardMaterial {
+            base_color: VERTEX_MATERIAL_COLOR,
+            perceptual_roughness: 0.92,
+            ..default()
+        }),
+    });
+    commands.insert_resource(ResourceVisualAssets {
+        ore_mesh_low: meshes.add(low_poly_ore_mesh(0)),
+        ore_mesh_ridge: meshes.add(low_poly_ore_mesh(1)),
+        ore_mesh_cluster: meshes.add(low_poly_ore_mesh(2)),
+        pine_tree_mesh: meshes.add(low_poly_pine_tree_mesh()),
+        birch_tree_mesh: meshes.add(low_poly_birch_tree_mesh()),
+        dead_tree_mesh: meshes.add(low_poly_dead_tree_mesh()),
+        coal_material: materials.add(StandardMaterial {
+            base_color: COAL_NODE_COLOR,
+            perceptual_roughness: 0.98,
+            ..default()
+        }),
+        iron_material: materials.add(StandardMaterial {
+            base_color: IRON_NODE_COLOR,
+            perceptual_roughness: 0.94,
+            ..default()
+        }),
+        sulfur_material: materials.add(StandardMaterial {
+            base_color: SULFUR_NODE_COLOR,
+            perceptual_roughness: 0.88,
+            ..default()
+        }),
+        vertex_material: materials.add(StandardMaterial {
+            base_color: VERTEX_MATERIAL_COLOR,
+            perceptual_roughness: 0.98,
             ..default()
         }),
     });
@@ -217,6 +280,327 @@ fn low_poly_bag_mesh() -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, flat_positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, flat_uvs)
     .with_computed_flat_normals()
+}
+
+type MeshColor = [f32; 4];
+
+const WOOD_DARK: MeshColor = [0.34, 0.21, 0.10, 1.0];
+const WOOD_LIGHT: MeshColor = [0.56, 0.36, 0.18, 1.0];
+const LEATHER_WRAP: MeshColor = [0.19, 0.12, 0.07, 1.0];
+const STONE_DARK: MeshColor = [0.35, 0.37, 0.35, 1.0];
+const STONE_LIGHT: MeshColor = [0.58, 0.61, 0.57, 1.0];
+const LEAF_PINE: MeshColor = [0.12, 0.34, 0.18, 1.0];
+const LEAF_BIRCH: MeshColor = [0.38, 0.55, 0.26, 1.0];
+const BIRCH_BARK: MeshColor = [0.78, 0.75, 0.65, 1.0];
+const DEAD_WOOD: MeshColor = [0.33, 0.25, 0.17, 1.0];
+
+#[derive(Default)]
+struct LowPolyMeshBuilder {
+    positions: Vec<[f32; 3]>,
+    colors: Vec<MeshColor>,
+    uvs: Vec<[f32; 2]>,
+}
+
+impl LowPolyMeshBuilder {
+    fn push_triangle(&mut self, a: [f32; 3], b: [f32; 3], c: [f32; 3], color: MeshColor) {
+        self.positions.extend_from_slice(&[a, b, c]);
+        self.colors.extend_from_slice(&[color, color, color]);
+        self.uvs
+            .extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]);
+    }
+
+    fn push_triangle_away_from(
+        &mut self,
+        origin: [f32; 3],
+        a: [f32; 3],
+        b: [f32; 3],
+        c: [f32; 3],
+        color: MeshColor,
+    ) {
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let normal = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        let centroid = [
+            (a[0] + b[0] + c[0]) / 3.0 - origin[0],
+            (a[1] + b[1] + c[1]) / 3.0 - origin[1],
+            (a[2] + b[2] + c[2]) / 3.0 - origin[2],
+        ];
+        let dot = normal[0] * centroid[0] + normal[1] * centroid[1] + normal[2] * centroid[2];
+        if dot < 0.0 {
+            self.push_triangle(a, c, b, color);
+        } else {
+            self.push_triangle(a, b, c, color);
+        }
+    }
+
+    fn add_box(&mut self, center: [f32; 3], half: [f32; 3], color: MeshColor) {
+        let [cx, cy, cz] = center;
+        let [hx, hy, hz] = half;
+        let vertices = [
+            [cx - hx, cy - hy, cz - hz],
+            [cx + hx, cy - hy, cz - hz],
+            [cx + hx, cy + hy, cz - hz],
+            [cx - hx, cy + hy, cz - hz],
+            [cx - hx, cy - hy, cz + hz],
+            [cx + hx, cy - hy, cz + hz],
+            [cx + hx, cy + hy, cz + hz],
+            [cx - hx, cy + hy, cz + hz],
+        ];
+        let triangles = [
+            (0, 2, 1),
+            (0, 3, 2),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 7, 3),
+            (0, 4, 7),
+            (1, 2, 6),
+            (1, 6, 5),
+            (0, 1, 5),
+            (0, 5, 4),
+            (3, 7, 6),
+            (3, 6, 2),
+        ];
+        for (a, b, c) in triangles {
+            self.push_triangle_away_from(center, vertices[a], vertices[b], vertices[c], color);
+        }
+    }
+
+    fn add_tri_prism(&mut self, points: [[f32; 2]; 3], half_depth: f32, color: MeshColor) {
+        let origin = [
+            (points[0][0] + points[1][0] + points[2][0]) / 3.0,
+            (points[0][1] + points[1][1] + points[2][1]) / 3.0,
+            0.0,
+        ];
+        let front = [
+            [points[0][0], points[0][1], -half_depth],
+            [points[1][0], points[1][1], -half_depth],
+            [points[2][0], points[2][1], -half_depth],
+        ];
+        let back = [
+            [points[0][0], points[0][1], half_depth],
+            [points[1][0], points[1][1], half_depth],
+            [points[2][0], points[2][1], half_depth],
+        ];
+        self.push_triangle_away_from(origin, front[0], front[2], front[1], color);
+        self.push_triangle_away_from(origin, back[0], back[1], back[2], color);
+        for side in 0..3 {
+            let next = (side + 1) % 3;
+            self.push_triangle_away_from(origin, front[side], front[next], back[next], color);
+            self.push_triangle_away_from(origin, front[side], back[next], back[side], color);
+        }
+    }
+
+    fn add_cone(
+        &mut self,
+        base_y: f32,
+        height: f32,
+        radius: f32,
+        segments: usize,
+        color: MeshColor,
+    ) {
+        let apex = [0.0, base_y + height, 0.0];
+        let origin = [0.0, base_y + height * 0.35, 0.0];
+        let ring = (0..segments)
+            .map(|index| {
+                let angle = index as f32 / segments as f32 * std::f32::consts::TAU;
+                [angle.cos() * radius, base_y, angle.sin() * radius]
+            })
+            .collect::<Vec<_>>();
+        for index in 0..segments {
+            let next = (index + 1) % segments;
+            self.push_triangle_away_from(origin, apex, ring[index], ring[next], color);
+        }
+    }
+
+    fn add_rock_mound(&mut self, variant: u8, color: MeshColor) {
+        match variant % 3 {
+            0 => {
+                self.add_rock_lump([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], color);
+                self.add_rock_lump([-0.34, 0.0, 0.18], [0.58, 0.72, 0.62], STONE_DARK);
+                self.add_rock_lump([0.34, 0.0, -0.16], [0.50, 0.62, 0.56], STONE_DARK);
+            }
+            1 => {
+                self.add_rock_lump([-0.24, 0.0, -0.02], [0.86, 1.10, 0.70], color);
+                self.add_rock_lump([0.34, 0.0, 0.12], [0.72, 0.86, 0.62], STONE_DARK);
+                self.add_rock_lump([0.02, 0.0, -0.34], [0.54, 0.66, 0.46], color);
+            }
+            _ => {
+                self.add_rock_lump([-0.38, 0.0, 0.08], [0.68, 0.82, 0.58], STONE_DARK);
+                self.add_rock_lump([0.06, 0.0, -0.10], [0.92, 1.18, 0.76], color);
+                self.add_rock_lump([0.44, 0.0, 0.22], [0.56, 0.72, 0.52], STONE_DARK);
+                self.add_rock_lump([0.10, 0.0, 0.44], [0.42, 0.54, 0.38], color);
+            }
+        }
+    }
+
+    fn add_rock_lump(&mut self, center: [f32; 3], scale: [f32; 3], color: MeshColor) {
+        let origin = [center[0], center[1] + 0.20 * scale[1], center[2]];
+        let base = [
+            [-0.62, 0.00, -0.18],
+            [-0.34, 0.00, -0.50],
+            [0.20, 0.00, -0.54],
+            [0.58, 0.00, -0.18],
+            [0.52, 0.00, 0.30],
+            [0.05, 0.00, 0.54],
+            [-0.48, 0.00, 0.32],
+        ];
+        let shoulder = [
+            [-0.42, 0.22, -0.10],
+            [-0.22, 0.30, -0.34],
+            [0.18, 0.26, -0.36],
+            [0.42, 0.20, -0.08],
+            [0.34, 0.24, 0.22],
+            [0.02, 0.32, 0.36],
+            [-0.34, 0.25, 0.20],
+        ];
+        let peak = [0.02, 0.58, -0.02];
+
+        let transform = |point: [f32; 3]| -> [f32; 3] {
+            [
+                center[0] + point[0] * scale[0],
+                center[1] + point[1] * scale[1],
+                center[2] + point[2] * scale[2],
+            ]
+        };
+
+        for index in 0..base.len() {
+            let next = (index + 1) % base.len();
+            self.push_triangle_away_from(
+                origin,
+                transform(base[index]),
+                transform(base[next]),
+                transform(shoulder[next]),
+                color,
+            );
+            self.push_triangle_away_from(
+                origin,
+                transform(base[index]),
+                transform(shoulder[next]),
+                transform(shoulder[index]),
+                color,
+            );
+            self.push_triangle_away_from(
+                origin,
+                transform(peak),
+                transform(shoulder[index]),
+                transform(shoulder[next]),
+                color,
+            );
+        }
+    }
+
+    fn add_octa_rock(&mut self, center: [f32; 3], scale: [f32; 3], color: MeshColor) {
+        let [cx, cy, cz] = center;
+        let [sx, sy, sz] = scale;
+        let top = [cx, cy + sy, cz];
+        let bottom = [cx, cy - sy * 0.82, cz];
+        let ring = [
+            [cx + sx * 0.95, cy + sy * 0.04, cz],
+            [cx + sx * 0.42, cy - sy * 0.05, cz + sz * 0.72],
+            [cx - sx * 0.24, cy + sy * 0.12, cz + sz * 0.88],
+            [cx - sx * 0.90, cy - sy * 0.08, cz + sz * 0.14],
+            [cx - sx * 0.46, cy + sy * 0.02, cz - sz * 0.78],
+            [cx + sx * 0.38, cy - sy * 0.10, cz - sz * 0.82],
+        ];
+        for index in 0..ring.len() {
+            let next = (index + 1) % ring.len();
+            self.push_triangle_away_from(center, top, ring[index], ring[next], color);
+            self.push_triangle_away_from(center, bottom, ring[next], ring[index], color);
+        }
+    }
+
+    fn build(self) -> Mesh {
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
+        .with_computed_flat_normals()
+    }
+}
+
+fn low_poly_hatchet_mesh() -> Mesh {
+    let mut builder = LowPolyMeshBuilder::default();
+    builder.add_box([0.0, -0.08, 0.0], [0.024, 0.34, 0.026], WOOD_LIGHT);
+    builder.add_box([0.0, -0.32, 0.0], [0.036, 0.042, 0.034], WOOD_DARK);
+    builder.add_box([0.0, -0.18, 0.0], [0.032, 0.018, 0.032], LEATHER_WRAP);
+    builder.add_box([0.0, -0.04, 0.0], [0.032, 0.018, 0.032], LEATHER_WRAP);
+    builder.add_box([0.0, 0.19, 0.0], [0.062, 0.040, 0.042], LEATHER_WRAP);
+    builder.add_box([0.05, 0.22, 0.0], [0.12, 0.045, 0.044], STONE_DARK);
+    builder.add_tri_prism(
+        [[0.08, 0.34], [0.25, 0.23], [0.08, 0.12]],
+        0.044,
+        STONE_LIGHT,
+    );
+    builder.add_tri_prism(
+        [[-0.02, 0.29], [-0.13, 0.21], [-0.02, 0.13]],
+        0.035,
+        STONE_DARK,
+    );
+    builder.add_box([0.0, 0.19, 0.0], [0.042, 0.030, 0.046], WOOD_DARK);
+    builder.build()
+}
+
+fn low_poly_pickaxe_mesh() -> Mesh {
+    let mut builder = LowPolyMeshBuilder::default();
+    builder.add_box([0.0, -0.11, 0.0], [0.024, 0.38, 0.026], WOOD_LIGHT);
+    builder.add_box([0.0, -0.38, 0.0], [0.036, 0.042, 0.034], WOOD_DARK);
+    builder.add_box([0.0, -0.22, 0.0], [0.032, 0.018, 0.032], LEATHER_WRAP);
+    builder.add_box([0.0, -0.07, 0.0], [0.032, 0.018, 0.032], LEATHER_WRAP);
+    builder.add_box([0.0, 0.25, 0.0], [0.094, 0.034, 0.044], STONE_DARK);
+    builder.add_tri_prism(
+        [[-0.08, 0.31], [-0.28, 0.25], [-0.08, 0.19]],
+        0.044,
+        STONE_LIGHT,
+    );
+    builder.add_tri_prism(
+        [[0.08, 0.31], [0.28, 0.25], [0.08, 0.19]],
+        0.044,
+        STONE_LIGHT,
+    );
+    builder.add_box([0.0, 0.21, 0.0], [0.044, 0.030, 0.048], LEATHER_WRAP);
+    builder.build()
+}
+
+fn low_poly_ore_mesh(variant: u8) -> Mesh {
+    let mut builder = LowPolyMeshBuilder::default();
+    builder.add_rock_mound(variant, STONE_LIGHT);
+    builder.build()
+}
+
+fn low_poly_pine_tree_mesh() -> Mesh {
+    let mut builder = LowPolyMeshBuilder::default();
+    builder.add_box([0.0, 0.48, 0.0], [0.12, 0.48, 0.12], WOOD_DARK);
+    builder.add_cone(0.58, 0.92, 0.74, 6, LEAF_PINE);
+    builder.add_cone(1.02, 0.88, 0.58, 6, LEAF_PINE);
+    builder.add_cone(1.42, 0.76, 0.42, 6, LEAF_PINE);
+    builder.build()
+}
+
+fn low_poly_birch_tree_mesh() -> Mesh {
+    let mut builder = LowPolyMeshBuilder::default();
+    builder.add_box([0.0, 0.55, 0.0], [0.105, 0.55, 0.105], BIRCH_BARK);
+    builder.add_box([0.09, 0.36, 0.0], [0.018, 0.09, 0.112], STONE_DARK);
+    builder.add_box([-0.08, 0.72, 0.0], [0.016, 0.08, 0.112], STONE_DARK);
+    builder.add_octa_rock([0.0, 1.48, 0.0], [0.66, 0.48, 0.62], LEAF_BIRCH);
+    builder.add_octa_rock([-0.26, 1.28, 0.08], [0.38, 0.30, 0.34], LEAF_BIRCH);
+    builder.add_octa_rock([0.30, 1.30, -0.04], [0.34, 0.28, 0.34], LEAF_BIRCH);
+    builder.build()
+}
+
+fn low_poly_dead_tree_mesh() -> Mesh {
+    let mut builder = LowPolyMeshBuilder::default();
+    builder.add_box([0.0, 0.74, 0.0], [0.13, 0.74, 0.13], DEAD_WOOD);
+    builder.add_box([0.24, 1.10, 0.0], [0.25, 0.045, 0.045], DEAD_WOOD);
+    builder.add_box([-0.20, 0.88, 0.0], [0.20, 0.040, 0.040], DEAD_WOOD);
+    builder.add_box([0.0, 1.44, 0.0], [0.10, 0.12, 0.10], DEAD_WOOD);
+    builder.build()
 }
 
 pub(crate) fn apply_world_scene_system(
@@ -468,6 +852,7 @@ mod tests {
                 inventory: Default::default(),
             }],
             dropped_items: Vec::new(),
+            resource_nodes: Vec::new(),
         };
 
         assert_eq!(snapshot.players[0].client_id, player.client_id);

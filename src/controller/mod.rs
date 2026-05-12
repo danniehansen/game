@@ -127,11 +127,26 @@ impl PlayerController {
         } else {
             0.0
         };
+        let total = remaining;
+        let start_yaw = self.yaw;
+        let target_yaw = self.last_input.yaw;
+        let start_pitch = self.pitch;
+        let target_pitch = self.last_input.pitch.clamp(-MAX_LOOK_PITCH, MAX_LOOK_PITCH);
+        let mut simulated = 0.0;
 
         while remaining > 0.0 {
             let step = remaining.min(MAX_SIMULATION_STEP);
+            let fraction = ((simulated + step * 0.5) / total).clamp(0.0, 1.0);
+            self.yaw = lerp_angle(start_yaw, target_yaw, fraction);
+            self.pitch = lerp(start_pitch, target_pitch, fraction);
             self.simulate_step(step, world);
+            simulated += step;
             remaining -= step;
+        }
+
+        if total > 0.0 {
+            self.yaw = normalize_angle(target_yaw);
+            self.pitch = target_pitch;
         }
     }
 
@@ -144,8 +159,6 @@ impl PlayerController {
     }
 
     fn simulate_step(&mut self, delta_seconds: f32, world: &WorldData) {
-        self.yaw = self.last_input.yaw;
-        self.pitch = self.last_input.pitch.clamp(-MAX_LOOK_PITCH, MAX_LOOK_PITCH);
         self.health = self.health.clamp(0.0, MAX_HEALTH);
 
         self.grounded = is_supported(self.position, world);
@@ -344,6 +357,26 @@ impl PlayerController {
             Reconciliation::Accepted
         }
     }
+}
+
+fn lerp(from: f32, to: f32, fraction: f32) -> f32 {
+    from + (to - from) * fraction
+}
+
+fn lerp_angle(from: f32, to: f32, fraction: f32) -> f32 {
+    normalize_angle(from + angle_delta(from, to) * fraction)
+}
+
+fn angle_delta(from: f32, to: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+
+    (to - from + PI).rem_euclid(TAU) - PI
+}
+
+fn normalize_angle(value: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+
+    (value + PI).rem_euclid(TAU) - PI
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

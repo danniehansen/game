@@ -8,13 +8,13 @@ use crate::{
     controller::MAX_LOOK_PITCH,
     protocol::{
         ACTIONBAR_SLOT_COUNT, ClientMessage, InventoryCommand, ItemContainerSlot,
-        MAX_INPUT_DELTA_SECONDS, PlayerInput, PlayerMovement, Vec3Net,
+        MAX_INPUT_DELTA_SECONDS, PlayerInput, PlayerMovement, ResourceGatherCommand, Vec3Net,
     },
 };
 
 use super::super::state::{
-    ClientRuntime, ClientSettings, InventoryUiState, LookState, MenuState, PickupTargetState,
-    Screen,
+    ClientRuntime, ClientSettings, GatherInputState, InventoryUiState, LookState, MenuState,
+    PickupTargetState, Screen,
 };
 
 pub(crate) fn chat_shortcut_system(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
@@ -235,15 +235,19 @@ fn movement_direction_from_keys(
 }
 
 pub(crate) fn gameplay_inventory_shortcuts_system(
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut mouse_wheel: MessageReader<MouseWheel>,
     mut runtime: ResMut<ClientRuntime>,
+    mut gather_input: ResMut<GatherInputState>,
     menu: Res<MenuState>,
     pickup_target: Res<PickupTargetState>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
     if !gameplay_accepts_controls(&menu, primary_window_focused(&primary_window)) {
         mouse_wheel.clear();
+        gather_input.cancel();
         return;
     }
 
@@ -287,6 +291,19 @@ pub(crate) fn gameplay_inventory_shortcuts_system(
     {
         send_inventory_command(&mut runtime, InventoryCommand::PickUp { dropped_item_id });
     }
+
+    if let Some(resource_node_id) = gather_input.update(
+        time.delta_secs(),
+        mouse_buttons.just_pressed(MouseButton::Left),
+        mouse_buttons.pressed(MouseButton::Left),
+        pickup_target.resource_node_id,
+    ) {
+        send_gameplay_message(
+            &mut runtime,
+            ClientMessage::Gather(ResourceGatherCommand { resource_node_id }),
+            "gather command",
+        );
+    }
 }
 
 fn actionbar_key_pressed(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
@@ -305,13 +322,21 @@ fn actionbar_key_pressed(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
 }
 
 pub(crate) fn send_inventory_command(runtime: &mut ClientRuntime, command: InventoryCommand) {
+    send_gameplay_message(
+        runtime,
+        ClientMessage::Inventory(command),
+        "inventory command",
+    );
+}
+
+fn send_gameplay_message(runtime: &mut ClientRuntime, message: ClientMessage, label: &str) {
     let Some(session) = runtime.session.as_mut() else {
-        runtime.push_error_message("inventory command failed: not connected");
+        runtime.push_error_message(format!("{label} failed: not connected"));
         return;
     };
 
-    if let Err(error) = session.send(ClientMessage::Inventory(command)) {
-        runtime.push_error_message(format!("inventory command failed: {error}"));
+    if let Err(error) = session.send(message) {
+        runtime.push_error_message(format!("{label} failed: {error}"));
     }
 }
 
