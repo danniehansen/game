@@ -5,6 +5,7 @@ mod effects;
 mod input;
 mod items;
 mod network;
+mod node_death;
 mod players;
 mod quit;
 mod settings;
@@ -22,9 +23,10 @@ pub(crate) use input::{
 };
 pub(crate) use items::{
     apply_dropped_items_system, apply_held_item_visual_system, apply_resource_nodes_system,
-    update_pickup_target_system,
+    update_pickup_target_system, update_tool_swap_state_system,
 };
 pub(crate) use network::{network_tick_system, session_shutdown_poll_system};
+pub(crate) use node_death::tick_felling_trees_system;
 pub(crate) use players::apply_snapshot_system;
 pub(crate) use quit::app_quit_system;
 pub(crate) use settings::save_client_settings_system;
@@ -38,6 +40,7 @@ pub(crate) enum ClientSystemSet {
     Cursor,
     Look,
     Input,
+    ToolSwap,
     InventoryShortcuts,
     Network,
     SessionShutdown,
@@ -53,6 +56,7 @@ pub(crate) enum ClientSystemSet {
     PickupTarget,
     ImpactEffectsSpawn,
     ImpactEffectsTick,
+    NodeDeathTick,
     MainMenuMusic,
     MenuBackdropCamera,
 }

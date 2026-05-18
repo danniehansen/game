@@ -9,7 +9,10 @@ use crate::{
             HeldItemVisual, ItemVisualAssets, MainCamera, NetworkDroppedItem, NetworkResourceNode,
             ResourceVisualAssets,
         },
-        state::{ClientRuntime, GatherInputState, LookState, MenuState, PickupTargetState, Screen},
+        state::{
+            ClientRuntime, GatherInputState, LookState, MenuState, PickupTargetState, Screen,
+            ToolSwapState,
+        },
     },
     items::{ItemModel, item_definition, pickup_anchor, pickup_anchor_from_position, pickup_score},
     protocol::{DroppedWorldItem, QuatNet, ResourceNodeState},
@@ -87,10 +90,19 @@ pub(crate) fn apply_resource_nodes_system(
     mut commands: Commands,
     runtime: Res<ClientRuntime>,
     assets: Res<ResourceVisualAssets>,
-    resource_entities: Query<(Entity, &NetworkResourceNode)>,
+    impact_assets: Res<crate::app::scene::ImpactEffectAssets>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut camera_kick: ResMut<super::CameraImpactKick>,
+    resource_entities: Query<(
+        Entity,
+        &NetworkResourceNode,
+        &Mesh3d,
+        &MeshMaterial3d<StandardMaterial>,
+        &Transform,
+    )>,
 ) {
     let Some(snapshot) = &runtime.snapshot else {
-        for (entity, _) in &resource_entities {
+        for (entity, _, _, _, _) in &resource_entities {
             commands.entity(entity).despawn();
         }
         return;
@@ -98,7 +110,7 @@ pub(crate) fn apply_resource_nodes_system(
 
     let existing = resource_entities
         .iter()
-        .map(|(entity, resource)| (resource.id, entity))
+        .map(|(entity, resource, _, _, _)| (resource.id, entity))
         .collect::<HashMap<_, _>>();
 
     for node in &snapshot.resource_nodes {
@@ -112,7 +124,10 @@ pub(crate) fn apply_resource_nodes_system(
             let (mesh, material) = resource_node_visual(&assets, node, definition.model);
             commands.spawn((
                 Name::new(format!("Resource Node {}", node.id)),
-                NetworkResourceNode { id: node.id },
+                NetworkResourceNode {
+                    id: node.id,
+                    model: definition.model,
+                },
                 Mesh3d(mesh),
                 MeshMaterial3d(material),
                 transform,
@@ -121,12 +136,29 @@ pub(crate) fn apply_resource_nodes_system(
         }
     }
 
-    for (entity, resource) in &resource_entities {
+    let player_position = runtime.local_view().map(|view| {
+        Vec3::new(view.position.x, view.position.y, view.position.z)
+            + Vec3::Y * crate::app::EYE_HEIGHT
+    });
+
+    for (entity, resource, mesh, material, transform) in &resource_entities {
         if !snapshot
             .resource_nodes
             .iter()
             .any(|node| node.id == resource.id)
         {
+            super::node_death::spawn_node_death(
+                &mut commands,
+                &impact_assets,
+                &mut materials,
+                &mut camera_kick,
+                resource.id,
+                resource.model,
+                *transform,
+                mesh.0.clone(),
+                material.0.clone(),
+                player_position,
+            );
             commands.entity(entity).despawn();
         }
     }
@@ -275,12 +307,45 @@ fn viewport_position(
     })
 }
 
+/// Watches the player's active actionbar slot and drives the tool-swap
+/// entry animation timer. Runs once per frame before the swing input system
+/// (so swings are correctly blocked while the new tool is still being
+/// lifted into view) and before the held-item visual system (so the entry
+/// offset is fresh).
+pub(crate) fn update_tool_swap_state_system(
+    time: Res<Time>,
+    runtime: Res<ClientRuntime>,
+    menu: Res<MenuState>,
+    mut swap_state: ResMut<ToolSwapState>,
+) {
+    if menu.screen != Screen::InGame {
+        swap_state.reset();
+        return;
+    }
+
+    let active = runtime
+        .local_player()
+        .and_then(|player| player.inventory.active_actionbar_stack())
+        .and_then(|stack| {
+            item_definition(&stack.item_id)
+                .filter(|definition| definition.equipable)
+                .map(|definition| (stack.item_id.as_str(), definition.model))
+        });
+    let active_owned = active.map(|(id, model)| (id.to_owned(), model));
+    let active_borrowed = active_owned
+        .as_ref()
+        .map(|(id, model)| (id.as_str(), *model));
+    swap_state.observe(time.delta_secs(), active_borrowed);
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_held_item_visual_system(
     mut commands: Commands,
     runtime: Res<ClientRuntime>,
     menu: Res<MenuState>,
     assets: Res<ItemVisualAssets>,
     gather_input: Res<GatherInputState>,
+    swap_state: Res<ToolSwapState>,
     camera: Query<Entity, With<MainCamera>>,
     held: Query<(Entity, &HeldItemVisual)>,
 ) {
@@ -306,7 +371,11 @@ pub(crate) fn apply_held_item_visual_system(
     let Ok(camera_entity) = camera.single() else {
         return;
     };
-    let transform = held_item_local_transform(definition.model, gather_input.swing_fraction());
+    let transform = held_item_local_transform(
+        definition.model,
+        gather_input.swing_fraction(),
+        swap_state.fraction(),
+    );
     let (mesh, material) = held_item_visual(&assets, definition.model);
     if let Some((entity, held_visual)) = held.iter().next() {
         let mut entity_commands = commands.entity(entity);
@@ -418,7 +487,11 @@ fn held_item_visual(
     }
 }
 
-fn held_item_local_transform(model: ItemModel, swing_fraction: f32) -> Transform {
+fn held_item_local_transform(
+    model: ItemModel,
+    swing_fraction: f32,
+    swap_fraction: f32,
+) -> Transform {
     let phase = swing_fraction.clamp(0.0, 1.0);
     let model_down_offset = match model {
         ItemModel::Bag => HELD_ITEM_DOWN_OFFSET,
@@ -433,10 +506,32 @@ fn held_item_local_transform(model: ItemModel, swing_fraction: f32) -> Transform
 
     let swing_translation = Vec3::NEG_Z * pose.forward + Vec3::X * pose.right + Vec3::Y * pose.up;
     let base_rotation = Quat::from_euler(EulerRot::XYZ, pose.pitch, pose.yaw, pose.roll);
-    let translation = Vec3::NEG_Z * HELD_ITEM_FORWARD_OFFSET + Vec3::X * HELD_ITEM_RIGHT_OFFSET
+    let base_translation = Vec3::NEG_Z * HELD_ITEM_FORWARD_OFFSET
+        + Vec3::X * HELD_ITEM_RIGHT_OFFSET
         - Vec3::Y * model_down_offset
         + swing_translation;
-    Transform::from_translation(translation).with_rotation(base_rotation * model_rotation)
+    let base_quat = base_rotation * model_rotation;
+
+    // Entry animation: the tool is "picked off the player's back" — it
+    // starts below the rest pose and slightly tilted forward, then eases up
+    // into place. Heavier items (pickaxe) drop further and tilt more so the
+    // lift reads as weightier without being noticeably slower.
+    let swap = swap_fraction.clamp(0.0, 1.0);
+    let lag = 1.0 - smoothstep(swap);
+    if lag <= f32::EPSILON {
+        return Transform::from_translation(base_translation).with_rotation(base_quat);
+    }
+
+    let (drop, back, pitch_lag) = match model {
+        ItemModel::Bag => (0.40, 0.04, -0.30),
+        ItemModel::Hatchet => (0.50, 0.05, -0.40),
+        ItemModel::Pickaxe => (0.68, 0.06, -0.55),
+    };
+
+    let enter_offset = Vec3::new(0.0, -drop * lag, back * lag);
+    let enter_tilt = Quat::from_rotation_x(pitch_lag * lag);
+    Transform::from_translation(base_translation + enter_offset)
+        .with_rotation(enter_tilt * base_quat)
 }
 
 #[derive(Debug, Clone, Copy)]

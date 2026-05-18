@@ -17,7 +17,7 @@ use crate::{
 
 use super::super::state::{
     ClientRuntime, ClientSettings, GatherInputState, ImpactEffectKind, InventoryUiState, LookState,
-    MenuState, PendingImpactEffect, PickupTargetState, Screen, SwingImpact,
+    MenuState, PendingImpactEffect, PickupTargetState, Screen, SwingImpact, ToolSwapState,
 };
 
 pub(crate) fn chat_shortcut_system(keys: Res<ButtonInput<KeyCode>>, mut menu: ResMut<MenuState>) {
@@ -247,6 +247,7 @@ pub(crate) struct GameplayInventoryShortcutsParams<'w, 's> {
     gather_input: ResMut<'w, GatherInputState>,
     menu: Res<'w, MenuState>,
     pickup_target: Res<'w, PickupTargetState>,
+    swap_state: Res<'w, ToolSwapState>,
     camera_kick: ResMut<'w, super::camera::CameraImpactKick>,
     primary_window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
 }
@@ -307,7 +308,14 @@ pub(crate) fn gameplay_inventory_shortcuts_system(mut params: GameplayInventoryS
         );
     }
 
-    let equipped_tool = equipped_tool_kind(&params.runtime);
+    // Tool-swap entry locks out swings — the new tool is still being
+    // lifted into view, so it can't be used yet.
+    let equipped_tool = if params.swap_state.is_swapping() {
+        params.gather_input.cancel();
+        None
+    } else {
+        equipped_tool_kind(&params.runtime)
+    };
     if let Some(impact) = params.gather_input.update(
         params.time.delta_secs(),
         params.mouse_buttons.just_pressed(MouseButton::Left),

@@ -20,7 +20,7 @@ use self::{
     state::{
         ClientRuntime, ClientSettingsStore, GatherInputState, InventoryUiState, LookState,
         MenuBackdropVisibility, MenuState, PickupTargetState, SaveStore, SessionShutdownTasks,
-        SteamUser,
+        SteamUser, ToolSwapState,
     },
     systems::{
         CameraImpactKick, ClientSystemSet, app_quit_system, apply_display_settings_system,
@@ -29,8 +29,9 @@ use self::{
         chat_shortcut_system, client_input_system, gameplay_inventory_shortcuts_system,
         main_menu_music_system, menu_backdrop_camera_system, mouse_look_system,
         network_tick_system, save_client_settings_system, session_shutdown_poll_system,
-        spawn_impact_effects_system, tick_impact_chips_system, toggle_inventory_system,
-        toggle_pause_system, update_cursor_system, update_pickup_target_system,
+        spawn_impact_effects_system, tick_felling_trees_system, tick_impact_chips_system,
+        toggle_inventory_system, toggle_pause_system, update_cursor_system,
+        update_pickup_target_system, update_tool_swap_state_system,
     },
     ui::{ButtonSoundRequests, button_sound_system, setup_button_sound_assets, ui_system},
 };
@@ -64,6 +65,7 @@ pub fn run_app() -> Result<()> {
         .insert_resource(InventoryUiState::default())
         .insert_resource(PickupTargetState::default())
         .insert_resource(GatherInputState::default())
+        .insert_resource(ToolSwapState::default())
         .insert_resource(CameraImpactKick::default())
         .insert_resource(LookState::default())
         .insert_resource(WinitSettings::continuous())
@@ -123,6 +125,21 @@ pub fn run_app() -> Result<()> {
                 ClientSystemSet::PickupTarget,
                 ClientSystemSet::ImpactEffectsSpawn,
                 ClientSystemSet::ImpactEffectsTick,
+                ClientSystemSet::NodeDeathTick,
+            )
+                .chain(),
+        )
+        // Tool-swap detection has to read the most recent snapshot — the
+        // inventory's active actionbar slot lives there — so it must run
+        // after Network. Putting it before HeldItem guarantees the entry
+        // animation fraction is fresh when the held-item visual is rebuilt
+        // in the same frame the new tool first appears.
+        .configure_sets(
+            Update,
+            (
+                ClientSystemSet::Network,
+                ClientSystemSet::ToolSwap,
+                ClientSystemSet::HeldItem,
             )
                 .chain(),
         )
@@ -159,6 +176,10 @@ pub fn run_app() -> Result<()> {
         .add_systems(Update, update_cursor_system.in_set(ClientSystemSet::Cursor))
         .add_systems(Update, mouse_look_system.in_set(ClientSystemSet::Look))
         .add_systems(Update, client_input_system.in_set(ClientSystemSet::Input))
+        .add_systems(
+            Update,
+            update_tool_swap_state_system.in_set(ClientSystemSet::ToolSwap),
+        )
         .add_systems(
             Update,
             gameplay_inventory_shortcuts_system.in_set(ClientSystemSet::InventoryShortcuts),
@@ -213,6 +234,10 @@ pub fn run_app() -> Result<()> {
         .add_systems(
             Update,
             tick_impact_chips_system.in_set(ClientSystemSet::ImpactEffectsTick),
+        )
+        .add_systems(
+            Update,
+            tick_felling_trees_system.in_set(ClientSystemSet::NodeDeathTick),
         )
         .add_systems(
             Update,

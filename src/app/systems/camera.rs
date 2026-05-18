@@ -13,9 +13,9 @@ use super::super::{
     state::{ClientRuntime, MenuState, Screen},
 };
 
-const AXE_KICK_PITCH: f32 = 0.022;
-const AXE_KICK_DOWN: f32 = 0.012;
-const AXE_KICK_DURATION: f32 = 0.12;
+const AXE_KICK_PITCH: f32 = 0.010;
+const AXE_KICK_DOWN: f32 = 0.005;
+const AXE_KICK_DURATION: f32 = 0.08;
 const PICKAXE_KICK_PITCH: f32 = 0.038;
 const PICKAXE_KICK_DOWN: f32 = 0.024;
 const PICKAXE_KICK_DURATION: f32 = 0.18;

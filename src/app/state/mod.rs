@@ -16,7 +16,7 @@ pub(crate) use dialogs::{
 };
 pub(crate) use inventory::{
     GatherInputState, ImpactEffectKind, InventoryDrag, InventoryDragButton, InventoryUiState,
-    PendingImpactEffect, PickupTargetState, SwingImpact,
+    PendingImpactEffect, PickupTargetState, SwingImpact, ToolSwapState,
 };
 pub(crate) use look::LookState;
 pub(crate) use menu::{MenuState, SaveStore, Screen, SteamUser};

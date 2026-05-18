@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 
 use crate::{
-    items::ToolKind,
+    items::{ItemModel, ToolKind},
     protocol::{DroppedItemId, ItemContainerSlot, ItemStack, ResourceNodeId, Vec3Net},
 };
 
@@ -36,6 +36,79 @@ pub(crate) fn swing_impact_fraction(tool: ToolKind) -> f32 {
     match tool {
         ToolKind::Axe => AXE_IMPACT_FRACTION,
         ToolKind::Pickaxe => PICKAXE_IMPACT_FRACTION,
+    }
+}
+
+// Tool-swap entry animation tuning. Lighter items reach rest faster; the
+// pickaxe is heavy enough that lifting it off the player's back should feel
+// like effort, but not so long that it becomes annoying.
+const SWAP_DURATION_BAG: f32 = 0.20;
+const SWAP_DURATION_HATCHET: f32 = 0.24;
+const SWAP_DURATION_PICKAXE: f32 = 0.42;
+
+pub(crate) fn swap_duration_for_model(model: ItemModel) -> f32 {
+    match model {
+        ItemModel::Bag => SWAP_DURATION_BAG,
+        ItemModel::Hatchet => SWAP_DURATION_HATCHET,
+        ItemModel::Pickaxe => SWAP_DURATION_PICKAXE,
+    }
+}
+
+/// Tracks the animation that plays when a new item enters the player's hand
+/// — used to lock out tool swings while the new tool is still being lifted
+/// into view, and to drive the held-item visual offset.
+#[derive(Resource, Debug, Default, Clone)]
+pub(crate) struct ToolSwapState {
+    current: Option<String>,
+    elapsed: f32,
+    duration: f32,
+}
+
+impl ToolSwapState {
+    pub(crate) fn reset(&mut self) {
+        self.current = None;
+        self.elapsed = 0.0;
+        self.duration = 0.0;
+    }
+
+    /// Returns `0.0` when the tool has just started entering view and `1.0`
+    /// once it has fully settled into the rest pose.
+    pub(crate) fn fraction(&self) -> f32 {
+        if self.duration <= 0.0 {
+            return 1.0;
+        }
+        (self.elapsed / self.duration).clamp(0.0, 1.0)
+    }
+
+    pub(crate) fn is_swapping(&self) -> bool {
+        self.duration > 0.0 && self.elapsed < self.duration
+    }
+
+    /// Step the animation forward, or reset to a new tool if the active
+    /// item has changed since the last tick.
+    pub(crate) fn observe(&mut self, delta_seconds: f32, active: Option<(&str, ItemModel)>) {
+        match (self.current.as_deref(), active) {
+            (None, None) => {
+                self.elapsed = 0.0;
+                self.duration = 0.0;
+            }
+            (Some(_), None) => {
+                self.reset();
+            }
+            (None, Some((id, model))) => {
+                self.current = Some(id.to_owned());
+                self.duration = swap_duration_for_model(model);
+                self.elapsed = 0.0;
+            }
+            (Some(old), Some((new_id, model))) if old != new_id => {
+                self.current = Some(new_id.to_owned());
+                self.duration = swap_duration_for_model(model);
+                self.elapsed = 0.0;
+            }
+            (Some(_), Some(_)) => {
+                self.elapsed = (self.elapsed + delta_seconds.max(0.0)).min(self.duration);
+            }
+        }
     }
 }
 
