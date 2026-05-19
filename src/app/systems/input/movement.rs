@@ -45,19 +45,17 @@ pub(crate) fn client_input_system(
         pitch: look.pitch,
     };
 
-    // Split-borrow: `runtime.world`/`world_grid` are read-only here while
-    // `predicted_local` is mutated. Reborrowing through `&mut *runtime` lets
-    // the compiler see the three fields as disjoint, avoiding a per-frame
-    // `WorldData` clone and a per-frame `BlockGrid` rebuild.
+    // Split-borrow: `world_grid` is read-only here while `predicted_local`
+    // is mutated. Reborrowing through `&mut *runtime` lets the compiler see
+    // the two fields as disjoint, avoiding a per-frame `BlockGrid` rebuild.
     let runtime = &mut *runtime;
     let mut movement = None;
-    if let (Some(predicted), Some(world), Some(grid)) = (
+    if let (Some(predicted), Some(grid)) = (
         runtime.predicted_local.as_mut(),
-        runtime.world.as_ref(),
         runtime.world_grid.as_ref(),
     ) {
         predicted.apply_input(input);
-        predicted.simulate_with_grid(delta_seconds, world, grid);
+        predicted.simulate_with_grid(delta_seconds, grid);
         movement = Some(PlayerMovement {
             sequence,
             position: predicted.position,

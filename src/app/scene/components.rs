@@ -36,13 +36,20 @@ pub(crate) struct MainCamera;
 #[derive(Component)]
 pub(crate) struct WorldGeometry;
 
-/// World-space upright height of a tree mesh at unit scale. Used by the
-/// felling animation as the lever length for its pendulum integration.
+/// World-space upright height of a tree mesh. Used by the felling animation
+/// as the lever length for its pendulum integration. Heights are baked into
+/// the mesh itself, so this returns the canonical top-Y value.
 pub(crate) fn tree_mesh_height(model: ResourceNodeModel) -> Option<f32> {
     match model {
-        ResourceNodeModel::PineTree => Some(2.18),
-        ResourceNodeModel::BirchTree => Some(2.04),
-        ResourceNodeModel::DeadTree => Some(1.42),
+        ResourceNodeModel::PineTreeSmall => Some(4.50),
+        ResourceNodeModel::PineTreeMedium => Some(6.60),
+        ResourceNodeModel::PineTreeLarge => Some(9.10),
+        ResourceNodeModel::BirchTreeSmall => Some(3.60),
+        ResourceNodeModel::BirchTreeMedium => Some(5.30),
+        ResourceNodeModel::BirchTreeLarge => Some(7.15),
+        ResourceNodeModel::DeadTreeSmall => Some(2.70),
+        ResourceNodeModel::DeadTreeMedium => Some(4.20),
+        ResourceNodeModel::DeadTreeLarge => Some(5.90),
         ResourceNodeModel::CoalOre | ResourceNodeModel::IronOre | ResourceNodeModel::SulfurOre => {
             None
         }

@@ -1,7 +1,4 @@
-use crate::{
-    protocol::Vec3Net,
-    world::{WorldBlock, WorldData},
-};
+use crate::{protocol::Vec3Net, world::WorldBlock};
 
 use super::{GROUND_EPSILON, PLAYER_HEIGHT, PLAYER_RADIUS, grid::BlockGrid};
 
@@ -23,7 +20,6 @@ pub(super) struct MoveResult {
 pub(super) fn move_with_collisions(
     position: &mut Vec3Net,
     velocity: &mut Vec3Net,
-    world: &WorldData,
     grid: &BlockGrid,
     axis: Axis,
     delta: f32,
@@ -53,7 +49,7 @@ pub(super) fn move_with_collisions(
         Axis::Z => Box::new(grid.candidates_for_swept(*position, 0.0, delta)),
     };
     for index in candidates {
-        let block = world.blocks[index];
+        let block = grid.block(index);
         if let Some(candidate) = swept_axis_collision(*position, attempted, block, axis, delta) {
             result.collided = true;
             result.landed |= matches!(axis, Axis::Y) && delta < 0.0;
@@ -158,18 +154,13 @@ fn player_overlaps_block_on_other_axes(position: Vec3Net, block: WorldBlock, axi
     }
 }
 
-pub(super) fn player_overlaps_world(
-    position: Vec3Net,
-    world: &WorldData,
-    grid: &BlockGrid,
-) -> bool {
+pub(super) fn player_overlaps_world(position: Vec3Net, grid: &BlockGrid) -> bool {
     grid.candidates_for_player(position)
-        .any(|index| player_overlaps_block(position, world.blocks[index]))
+        .any(|index| player_overlaps_block(position, grid.block(index)))
 }
 
 pub(super) fn support_height_between(
     position: Vec3Net,
-    world: &WorldData,
     grid: &BlockGrid,
     min_y: f32,
     max_y: f32,
@@ -177,7 +168,7 @@ pub(super) fn support_height_between(
     let mut support = (min_y <= 0.0 && max_y >= 0.0).then_some(0.0);
 
     for index in grid.candidates_for_player(position) {
-        let block = world.blocks[index];
+        let block = grid.block(index);
         let top = block.max().y;
         if top < min_y || top > max_y {
             continue;
@@ -219,10 +210,9 @@ fn player_vertically_overlaps_block(position: Vec3Net, block: WorldBlock) -> boo
     position.y + PLAYER_HEIGHT > min.y && position.y < max.y
 }
 
-pub(super) fn is_supported(position: Vec3Net, world: &WorldData, grid: &BlockGrid) -> bool {
+pub(super) fn is_supported(position: Vec3Net, grid: &BlockGrid) -> bool {
     support_height_between(
         position,
-        world,
         grid,
         position.y - GROUND_EPSILON,
         position.y + GROUND_EPSILON,

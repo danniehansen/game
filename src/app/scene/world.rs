@@ -2,10 +2,12 @@ use bevy::prelude::*;
 
 use crate::{
     app::state::{ClientRuntime, MenuState, Screen},
-    world::WorldData,
+    world::{BlockKind, WorldData},
 };
 
 use super::{assets::WORLD_COLOR, components::WorldGeometry};
+
+pub(super) const STONE_WALL_COLOR: Color = Color::srgb(0.52, 0.53, 0.55);
 
 /// What world geometry we last spawned into the scene. Compared against the
 /// runtime's current selection in O(1) so we can skip the expensive respawn
@@ -108,13 +110,26 @@ fn spawn_world_geometry(
         materials.add(Color::srgb(0.36, 0.44, 0.55)),
         materials.add(Color::srgb(0.48, 0.40, 0.52)),
     ];
+    let stone_material = materials.add(StandardMaterial {
+        base_color: STONE_WALL_COLOR,
+        perceptual_roughness: 0.95,
+        ..default()
+    });
     for (index, block) in world.blocks.iter().enumerate() {
         let size = block.size();
+        let material = match block.kind {
+            BlockKind::Stone => stone_material.clone(),
+            BlockKind::Standard => block_materials[index % block_materials.len()].clone(),
+        };
+        let name = match block.kind {
+            BlockKind::Stone => format!("Stone Wall {}", index + 1),
+            BlockKind::Standard => format!("Test Cube {}", index + 1),
+        };
         commands.spawn((
-            Name::new(format!("Test Cube {}", index + 1)),
+            Name::new(name),
             WorldGeometry,
             Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
-            MeshMaterial3d(block_materials[index % block_materials.len()].clone()),
+            MeshMaterial3d(material),
             Transform::from_xyz(block.center.x, block.center.y, block.center.z),
         ));
     }

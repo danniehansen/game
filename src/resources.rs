@@ -1,15 +1,24 @@
 use crate::{
     items::{COAL_ID, IRON_ORE_ID, SULFUR_ORE_ID, ToolKind, ToolProfile, WOOD_ID, look_forward},
     protocol::{ItemStack, ResourceNodeState, Vec3Net},
-    world::WorldResourceNodeSpawn,
+    world::{WorldBlock, WorldResourceNodeSpawn},
 };
 
 pub const COAL_NODE_ID: &str = "coal_node";
 pub const IRON_NODE_ID: &str = "iron_node";
 pub const SULFUR_NODE_ID: &str = "sulfur_node";
+// Tree IDs: the un-suffixed names (`pine_tree`, `birch_tree`, `dead_tree`)
+// are the medium variants. Old saves that referenced these IDs before
+// size variants existed continue to load as medium without migration.
+pub const PINE_TREE_SMALL_NODE_ID: &str = "pine_tree_small";
 pub const PINE_TREE_NODE_ID: &str = "pine_tree";
+pub const PINE_TREE_LARGE_NODE_ID: &str = "pine_tree_large";
+pub const BIRCH_TREE_SMALL_NODE_ID: &str = "birch_tree_small";
 pub const BIRCH_TREE_NODE_ID: &str = "birch_tree";
+pub const BIRCH_TREE_LARGE_NODE_ID: &str = "birch_tree_large";
+pub const DEAD_TREE_SMALL_NODE_ID: &str = "dead_tree_small";
 pub const DEAD_TREE_NODE_ID: &str = "dead_tree";
+pub const DEAD_TREE_LARGE_NODE_ID: &str = "dead_tree_large";
 
 pub const RESOURCE_GATHER_RANGE: f32 = 3.75;
 const DEFAULT_RESOURCE_RAY_RADIUS: f32 = 0.7;
@@ -23,9 +32,36 @@ pub enum ResourceNodeModel {
     CoalOre,
     IronOre,
     SulfurOre,
-    PineTree,
-    BirchTree,
-    DeadTree,
+    PineTreeSmall,
+    PineTreeMedium,
+    PineTreeLarge,
+    BirchTreeSmall,
+    BirchTreeMedium,
+    BirchTreeLarge,
+    DeadTreeSmall,
+    DeadTreeMedium,
+    DeadTreeLarge,
+}
+
+impl ResourceNodeModel {
+    pub fn is_tree(self) -> bool {
+        matches!(
+            self,
+            Self::PineTreeSmall
+                | Self::PineTreeMedium
+                | Self::PineTreeLarge
+                | Self::BirchTreeSmall
+                | Self::BirchTreeMedium
+                | Self::BirchTreeLarge
+                | Self::DeadTreeSmall
+                | Self::DeadTreeMedium
+                | Self::DeadTreeLarge
+        )
+    }
+
+    pub fn is_ore(self) -> bool {
+        matches!(self, Self::CoalOre | Self::IronOre | Self::SulfurOre)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,31 +136,85 @@ pub const RESOURCE_NODE_DEFINITIONS: &[ResourceNodeDefinition] = &[
         ray_radius: 0.72,
     },
     ResourceNodeDefinition {
+        id: PINE_TREE_SMALL_NODE_ID,
+        name: "Pine Sapling",
+        model: ResourceNodeModel::PineTreeSmall,
+        required_tool: ToolRequirement::new(ToolKind::Axe, 1),
+        storage: &[ResourceMaterial::new(WOOD_ID, 16)],
+        anchor_height: 1.35,
+        ray_radius: 0.72,
+    },
+    ResourceNodeDefinition {
         id: PINE_TREE_NODE_ID,
         name: "Pine Tree",
-        model: ResourceNodeModel::PineTree,
+        model: ResourceNodeModel::PineTreeMedium,
         required_tool: ToolRequirement::new(ToolKind::Axe, 1),
         storage: &[ResourceMaterial::new(WOOD_ID, 32)],
-        anchor_height: 1.35,
-        ray_radius: 0.82,
+        anchor_height: 1.45,
+        ray_radius: 0.86,
+    },
+    ResourceNodeDefinition {
+        id: PINE_TREE_LARGE_NODE_ID,
+        name: "Old Pine",
+        model: ResourceNodeModel::PineTreeLarge,
+        required_tool: ToolRequirement::new(ToolKind::Axe, 1),
+        storage: &[ResourceMaterial::new(WOOD_ID, 56)],
+        anchor_height: 1.55,
+        ray_radius: 1.05,
+    },
+    ResourceNodeDefinition {
+        id: BIRCH_TREE_SMALL_NODE_ID,
+        name: "Birch Sapling",
+        model: ResourceNodeModel::BirchTreeSmall,
+        required_tool: ToolRequirement::new(ToolKind::Axe, 1),
+        storage: &[ResourceMaterial::new(WOOD_ID, 14)],
+        anchor_height: 1.25,
+        ray_radius: 0.68,
     },
     ResourceNodeDefinition {
         id: BIRCH_TREE_NODE_ID,
         name: "Birch Tree",
-        model: ResourceNodeModel::BirchTree,
+        model: ResourceNodeModel::BirchTreeMedium,
         required_tool: ToolRequirement::new(ToolKind::Axe, 1),
         storage: &[ResourceMaterial::new(WOOD_ID, 28)],
-        anchor_height: 1.25,
-        ray_radius: 0.78,
+        anchor_height: 1.40,
+        ray_radius: 0.82,
+    },
+    ResourceNodeDefinition {
+        id: BIRCH_TREE_LARGE_NODE_ID,
+        name: "Old Birch",
+        model: ResourceNodeModel::BirchTreeLarge,
+        required_tool: ToolRequirement::new(ToolKind::Axe, 1),
+        storage: &[ResourceMaterial::new(WOOD_ID, 48)],
+        anchor_height: 1.50,
+        ray_radius: 0.98,
+    },
+    ResourceNodeDefinition {
+        id: DEAD_TREE_SMALL_NODE_ID,
+        name: "Dead Snag",
+        model: ResourceNodeModel::DeadTreeSmall,
+        required_tool: ToolRequirement::new(ToolKind::Axe, 1),
+        storage: &[ResourceMaterial::new(WOOD_ID, 10)],
+        anchor_height: 1.20,
+        ray_radius: 0.66,
     },
     ResourceNodeDefinition {
         id: DEAD_TREE_NODE_ID,
         name: "Dead Tree",
-        model: ResourceNodeModel::DeadTree,
+        model: ResourceNodeModel::DeadTreeMedium,
         required_tool: ToolRequirement::new(ToolKind::Axe, 1),
         storage: &[ResourceMaterial::new(WOOD_ID, 18)],
-        anchor_height: 1.05,
-        ray_radius: 0.72,
+        anchor_height: 1.35,
+        ray_radius: 0.78,
+    },
+    ResourceNodeDefinition {
+        id: DEAD_TREE_LARGE_NODE_ID,
+        name: "Ancient Dead Tree",
+        model: ResourceNodeModel::DeadTreeLarge,
+        required_tool: ToolRequirement::new(ToolKind::Axe, 1),
+        storage: &[ResourceMaterial::new(WOOD_ID, 32)],
+        anchor_height: 1.45,
+        ray_radius: 0.92,
     },
 ];
 
@@ -239,6 +329,32 @@ pub fn remove_resource_from_storage(
 
 pub fn resource_storage_is_empty(node: &ResourceNodeState) -> bool {
     node.storage.iter().all(|stack| stack.quantity == 0)
+}
+
+/// Returns an AABB collider for a live tree, or `None` for any other node
+/// model. The collider is a vertical pillar at the trunk base, slightly
+/// wider than the visible trunk so the player and camera don't clip the
+/// bark when brushing past. Height is fixed at 3m — taller than the player
+/// AABB so the player can't walk over or under it, but well below the
+/// canopy so the player's bounding box never touches foliage.
+pub fn tree_collider(node: &ResourceNodeState) -> Option<WorldBlock> {
+    let definition = resource_node_definition(&node.definition_id)?;
+    let half_width = match definition.model {
+        ResourceNodeModel::PineTreeSmall => 0.30,
+        ResourceNodeModel::PineTreeMedium => 0.36,
+        ResourceNodeModel::PineTreeLarge => 0.46,
+        ResourceNodeModel::BirchTreeSmall => 0.24,
+        ResourceNodeModel::BirchTreeMedium => 0.28,
+        ResourceNodeModel::BirchTreeLarge => 0.34,
+        ResourceNodeModel::DeadTreeSmall => 0.30,
+        ResourceNodeModel::DeadTreeMedium => 0.34,
+        ResourceNodeModel::DeadTreeLarge => 0.44,
+        _ => return None,
+    };
+    let half_height = 1.5;
+    let center = Vec3Net::new(node.position.x, half_height, node.position.z);
+    let half_extents = Vec3Net::new(half_width, half_height, half_width);
+    Some(WorldBlock::new(center, half_extents))
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use crate::{
         ACTIONBAR_SLOT_COUNT, ClientMessage, InventoryCommand, ItemContainerSlot,
         ResourceGatherCommand,
     },
-    resources::{ResourceNodeModel, resource_node_definition},
+    resources::resource_node_definition,
 };
 
 use super::gating::{gameplay_accepts_controls, primary_window_focused};
@@ -187,13 +187,10 @@ fn resource_target_anchor(target: &PickupTargetState, node_id: u64) -> Option<Ve
 fn resource_target_effect_kind(target: &PickupTargetState) -> Option<ImpactEffectKind> {
     let definition_id = target.resource_definition_id.as_deref()?;
     let definition = resource_node_definition(definition_id)?;
-    Some(match definition.model {
-        ResourceNodeModel::PineTree
-        | ResourceNodeModel::BirchTree
-        | ResourceNodeModel::DeadTree => ImpactEffectKind::WoodChips,
-        ResourceNodeModel::CoalOre | ResourceNodeModel::IronOre | ResourceNodeModel::SulfurOre => {
-            ImpactEffectKind::StoneShards
-        }
+    Some(if definition.model.is_tree() {
+        ImpactEffectKind::WoodChips
+    } else {
+        ImpactEffectKind::StoneShards
     })
 }
 

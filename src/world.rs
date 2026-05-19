@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     protocol::Vec3Net,
     resources::{
-        BIRCH_TREE_NODE_ID, COAL_NODE_ID, DEAD_TREE_NODE_ID, IRON_NODE_ID, PINE_TREE_NODE_ID,
-        SULFUR_NODE_ID,
+        BIRCH_TREE_LARGE_NODE_ID, BIRCH_TREE_NODE_ID, BIRCH_TREE_SMALL_NODE_ID, COAL_NODE_ID,
+        DEAD_TREE_LARGE_NODE_ID, DEAD_TREE_NODE_ID, DEAD_TREE_SMALL_NODE_ID, IRON_NODE_ID,
+        PINE_TREE_LARGE_NODE_ID, PINE_TREE_NODE_ID, PINE_TREE_SMALL_NODE_ID, SULFUR_NODE_ID,
     },
 };
 
@@ -99,6 +100,15 @@ impl WorldData {
         Self {
             floor_size: DEFAULT_FLOOR_SIZE,
             blocks: vec![
+                // Perimeter stone walls — keep the playable area bounded so
+                // the player can't wander off the edge of the test floor.
+                // Walls are 4m tall (well above eye level) and sit just inside
+                // the 80m floor edge.
+                WorldBlock::stone(Vec3Net::new(0.0, 2.0, 39.0), Vec3Net::new(39.0, 2.0, 0.5)),
+                WorldBlock::stone(Vec3Net::new(0.0, 2.0, -39.0), Vec3Net::new(39.0, 2.0, 0.5)),
+                WorldBlock::stone(Vec3Net::new(39.0, 2.0, 0.0), Vec3Net::new(0.5, 2.0, 39.0)),
+                WorldBlock::stone(Vec3Net::new(-39.0, 2.0, 0.0), Vec3Net::new(0.5, 2.0, 39.0)),
+                // Player controller test shapes.
                 WorldBlock::new(Vec3Net::new(-4.0, 0.5, -4.0), Vec3Net::new(1.3, 0.5, 1.3)),
                 WorldBlock::new(Vec3Net::new(3.6, 0.5, -2.4), Vec3Net::new(1.0, 0.5, 1.0)),
                 WorldBlock::new(Vec3Net::new(0.0, 0.25, -6.0), Vec3Net::new(2.0, 0.25, 0.8)),
@@ -142,51 +152,217 @@ impl WorldData {
                 WorldBlock::new(Vec3Net::new(9.0, 0.6, -1.2), Vec3Net::new(0.7, 0.6, 0.45)),
                 WorldBlock::new(Vec3Net::new(9.0, 0.9, 1.3), Vec3Net::new(0.55, 0.9, 0.45)),
             ],
-            resource_nodes: vec![
-                WorldResourceNodeSpawn::new(1, COAL_NODE_ID, Vec3Net::new(12.5, 0.0, -8.5), 0.2),
-                WorldResourceNodeSpawn::new(2, COAL_NODE_ID, Vec3Net::new(14.3, 0.0, -10.1), 1.1),
-                WorldResourceNodeSpawn::new(3, IRON_NODE_ID, Vec3Net::new(16.5, 0.0, -8.4), -0.4),
-                WorldResourceNodeSpawn::new(4, IRON_NODE_ID, Vec3Net::new(18.4, 0.0, -10.3), 0.8),
-                WorldResourceNodeSpawn::new(5, SULFUR_NODE_ID, Vec3Net::new(13.3, 0.0, -13.0), 0.5),
-                WorldResourceNodeSpawn::new(
-                    6,
-                    SULFUR_NODE_ID,
-                    Vec3Net::new(16.1, 0.0, -13.2),
-                    -1.0,
-                ),
-                WorldResourceNodeSpawn::new(
-                    20,
-                    PINE_TREE_NODE_ID,
-                    Vec3Net::new(-8.6, 0.0, 5.8),
-                    0.1,
-                ),
-                WorldResourceNodeSpawn::new(
-                    21,
-                    BIRCH_TREE_NODE_ID,
-                    Vec3Net::new(-6.2, 0.0, 7.2),
-                    -0.6,
-                ),
-                WorldResourceNodeSpawn::new(
-                    22,
-                    DEAD_TREE_NODE_ID,
-                    Vec3Net::new(-3.5, 0.0, 6.4),
-                    0.9,
-                ),
-                WorldResourceNodeSpawn::new(
-                    23,
-                    PINE_TREE_NODE_ID,
-                    Vec3Net::new(5.4, 0.0, 7.4),
-                    -0.2,
-                ),
-                WorldResourceNodeSpawn::new(
-                    24,
-                    BIRCH_TREE_NODE_ID,
-                    Vec3Net::new(8.0, 0.0, 6.1),
-                    0.7,
-                ),
-            ],
+            resource_nodes: build_test_world_resource_nodes(),
         }
     }
+}
+
+/// Builds the test world's resource node spawns. Kept as a free function so
+/// the long static list of spawns doesn't bloat `test_world` and stays easy
+/// to reorganise. Nodes are scattered across the playable area: ore clusters
+/// near the player test obstacles plus three more around the map, and tree
+/// groves at each corner of the floor showcasing every size variant.
+fn build_test_world_resource_nodes() -> Vec<WorldResourceNodeSpawn> {
+    vec![
+        // Ore cluster near the player controller test area.
+        WorldResourceNodeSpawn::new(1, COAL_NODE_ID, Vec3Net::new(12.5, 0.0, -8.5), 0.2),
+        WorldResourceNodeSpawn::new(2, COAL_NODE_ID, Vec3Net::new(14.3, 0.0, -10.1), 1.1),
+        WorldResourceNodeSpawn::new(3, IRON_NODE_ID, Vec3Net::new(16.5, 0.0, -8.4), -0.4),
+        WorldResourceNodeSpawn::new(4, IRON_NODE_ID, Vec3Net::new(18.4, 0.0, -10.3), 0.8),
+        WorldResourceNodeSpawn::new(5, SULFUR_NODE_ID, Vec3Net::new(13.3, 0.0, -13.0), 0.5),
+        WorldResourceNodeSpawn::new(6, SULFUR_NODE_ID, Vec3Net::new(16.1, 0.0, -13.2), -1.0),
+        // North-west ore vein.
+        WorldResourceNodeSpawn::new(7, COAL_NODE_ID, Vec3Net::new(-22.0, 0.0, 21.0), 0.4),
+        WorldResourceNodeSpawn::new(8, IRON_NODE_ID, Vec3Net::new(-25.5, 0.0, 23.0), -0.7),
+        WorldResourceNodeSpawn::new(9, SULFUR_NODE_ID, Vec3Net::new(-20.5, 0.0, 25.5), 1.4),
+        // South-east ore vein.
+        WorldResourceNodeSpawn::new(10, IRON_NODE_ID, Vec3Net::new(25.0, 0.0, -22.0), 0.3),
+        WorldResourceNodeSpawn::new(11, COAL_NODE_ID, Vec3Net::new(28.5, 0.0, -24.0), -1.1),
+        WorldResourceNodeSpawn::new(12, SULFUR_NODE_ID, Vec3Net::new(23.5, 0.0, -27.0), 0.6),
+        // Scattered ores around the player loop area.
+        WorldResourceNodeSpawn::new(13, IRON_NODE_ID, Vec3Net::new(-15.0, 0.0, -8.0), 0.9),
+        WorldResourceNodeSpawn::new(14, COAL_NODE_ID, Vec3Net::new(-18.0, 0.0, -22.0), -0.5),
+        WorldResourceNodeSpawn::new(15, SULFUR_NODE_ID, Vec3Net::new(20.0, 0.0, 22.0), 1.2),
+        // North-east forest grove — mixed variants.
+        WorldResourceNodeSpawn::new(
+            20,
+            PINE_TREE_LARGE_NODE_ID,
+            Vec3Net::new(28.0, 0.0, 28.0),
+            0.1,
+        ),
+        WorldResourceNodeSpawn::new(21, PINE_TREE_NODE_ID, Vec3Net::new(22.0, 0.0, 31.0), 0.8),
+        WorldResourceNodeSpawn::new(22, PINE_TREE_NODE_ID, Vec3Net::new(18.5, 0.0, 18.5), -0.4),
+        WorldResourceNodeSpawn::new(
+            23,
+            PINE_TREE_SMALL_NODE_ID,
+            Vec3Net::new(26.0, 0.0, 21.5),
+            1.3,
+        ),
+        WorldResourceNodeSpawn::new(
+            24,
+            BIRCH_TREE_LARGE_NODE_ID,
+            Vec3Net::new(16.5, 0.0, 26.0),
+            0.5,
+        ),
+        WorldResourceNodeSpawn::new(25, BIRCH_TREE_NODE_ID, Vec3Net::new(31.0, 0.0, 17.5), -1.2),
+        WorldResourceNodeSpawn::new(
+            26,
+            BIRCH_TREE_SMALL_NODE_ID,
+            Vec3Net::new(20.5, 0.0, 24.5),
+            0.3,
+        ),
+        WorldResourceNodeSpawn::new(27, DEAD_TREE_NODE_ID, Vec3Net::new(24.0, 0.0, 33.0), -0.6),
+        WorldResourceNodeSpawn::new(
+            28,
+            DEAD_TREE_SMALL_NODE_ID,
+            Vec3Net::new(32.5, 0.0, 23.5),
+            1.5,
+        ),
+        // North-west forest grove — denser, more pines.
+        WorldResourceNodeSpawn::new(
+            30,
+            PINE_TREE_LARGE_NODE_ID,
+            Vec3Net::new(-26.0, 0.0, 18.5),
+            0.7,
+        ),
+        WorldResourceNodeSpawn::new(31, PINE_TREE_NODE_ID, Vec3Net::new(-19.0, 0.0, 28.5), -0.3),
+        WorldResourceNodeSpawn::new(
+            32,
+            PINE_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-15.5, 0.0, 18.5),
+            1.1,
+        ),
+        WorldResourceNodeSpawn::new(33, PINE_TREE_NODE_ID, Vec3Net::new(-30.0, 0.0, 30.0), 0.2),
+        WorldResourceNodeSpawn::new(
+            34,
+            BIRCH_TREE_LARGE_NODE_ID,
+            Vec3Net::new(-22.5, 0.0, 30.0),
+            -0.8,
+        ),
+        WorldResourceNodeSpawn::new(35, BIRCH_TREE_NODE_ID, Vec3Net::new(-30.5, 0.0, 21.5), 0.5),
+        WorldResourceNodeSpawn::new(36, BIRCH_TREE_NODE_ID, Vec3Net::new(-16.5, 0.0, 24.0), -1.0),
+        WorldResourceNodeSpawn::new(
+            37,
+            BIRCH_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-32.0, 0.0, 33.0),
+            1.4,
+        ),
+        WorldResourceNodeSpawn::new(
+            38,
+            DEAD_TREE_LARGE_NODE_ID,
+            Vec3Net::new(-25.5, 0.0, 25.5),
+            0.0,
+        ),
+        WorldResourceNodeSpawn::new(
+            39,
+            DEAD_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-20.5, 0.0, 33.0),
+            -0.4,
+        ),
+        // South-east forest grove — fewer pines, more dead trees.
+        WorldResourceNodeSpawn::new(40, PINE_TREE_NODE_ID, Vec3Net::new(24.5, 0.0, -28.0), 0.6),
+        WorldResourceNodeSpawn::new(
+            41,
+            PINE_TREE_SMALL_NODE_ID,
+            Vec3Net::new(18.5, 0.0, -22.5),
+            -0.9,
+        ),
+        WorldResourceNodeSpawn::new(
+            42,
+            BIRCH_TREE_LARGE_NODE_ID,
+            Vec3Net::new(30.5, 0.0, -30.5),
+            1.0,
+        ),
+        WorldResourceNodeSpawn::new(43, BIRCH_TREE_NODE_ID, Vec3Net::new(16.5, 0.0, -24.5), -0.2),
+        WorldResourceNodeSpawn::new(
+            44,
+            DEAD_TREE_LARGE_NODE_ID,
+            Vec3Net::new(28.0, 0.0, -22.0),
+            0.4,
+        ),
+        WorldResourceNodeSpawn::new(45, DEAD_TREE_NODE_ID, Vec3Net::new(22.0, 0.0, -33.0), -1.3),
+        WorldResourceNodeSpawn::new(
+            46,
+            DEAD_TREE_SMALL_NODE_ID,
+            Vec3Net::new(33.0, 0.0, -26.0),
+            0.8,
+        ),
+        // South-west forest grove.
+        WorldResourceNodeSpawn::new(
+            50,
+            PINE_TREE_LARGE_NODE_ID,
+            Vec3Net::new(-28.0, 0.0, -28.5),
+            -0.5,
+        ),
+        WorldResourceNodeSpawn::new(51, PINE_TREE_NODE_ID, Vec3Net::new(-22.0, 0.0, -22.0), 1.1),
+        WorldResourceNodeSpawn::new(
+            52,
+            PINE_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-32.5, 0.0, -22.0),
+            0.3,
+        ),
+        WorldResourceNodeSpawn::new(
+            53,
+            BIRCH_TREE_NODE_ID,
+            Vec3Net::new(-18.5, 0.0, -30.0),
+            -0.7,
+        ),
+        WorldResourceNodeSpawn::new(
+            54,
+            BIRCH_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-32.5, 0.0, -32.0),
+            1.5,
+        ),
+        WorldResourceNodeSpawn::new(55, DEAD_TREE_NODE_ID, Vec3Net::new(-25.5, 0.0, -26.0), 0.0),
+        WorldResourceNodeSpawn::new(
+            56,
+            DEAD_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-16.5, 0.0, -18.5),
+            -1.0,
+        ),
+        // Trees near the player spawn — close enough to chop in the first
+        // minute of play, far enough not to crowd the controller test area.
+        WorldResourceNodeSpawn::new(60, PINE_TREE_NODE_ID, Vec3Net::new(-9.0, 0.0, 8.5), -0.3),
+        WorldResourceNodeSpawn::new(61, BIRCH_TREE_NODE_ID, Vec3Net::new(-1.0, 0.0, 9.5), -0.9),
+        WorldResourceNodeSpawn::new(
+            62,
+            PINE_TREE_SMALL_NODE_ID,
+            Vec3Net::new(-6.0, 0.0, 14.0),
+            0.4,
+        ),
+        WorldResourceNodeSpawn::new(
+            63,
+            BIRCH_TREE_SMALL_NODE_ID,
+            Vec3Net::new(3.0, 0.0, 14.0),
+            0.7,
+        ),
+        WorldResourceNodeSpawn::new(
+            64,
+            DEAD_TREE_SMALL_NODE_ID,
+            Vec3Net::new(8.5, 0.0, 10.0),
+            1.1,
+        ),
+        WorldResourceNodeSpawn::new(65, PINE_TREE_NODE_ID, Vec3Net::new(11.5, 0.0, 16.0), -0.2),
+        // Lone landmarks in the open middle bands of the map.
+        WorldResourceNodeSpawn::new(
+            70,
+            DEAD_TREE_LARGE_NODE_ID,
+            Vec3Net::new(0.0, 0.0, 24.0),
+            0.0,
+        ),
+        WorldResourceNodeSpawn::new(
+            71,
+            PINE_TREE_LARGE_NODE_ID,
+            Vec3Net::new(-12.5, 0.0, -16.0),
+            0.6,
+        ),
+        WorldResourceNodeSpawn::new(
+            72,
+            BIRCH_TREE_LARGE_NODE_ID,
+            Vec3Net::new(14.5, 0.0, 4.0),
+            -1.2,
+        ),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -208,10 +384,23 @@ impl WorldResourceNodeSpawn {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockKind {
+    /// Default obstacle — gets the rotating block palette in the renderer.
+    #[default]
+    Standard,
+    /// Grayish stone block, used for perimeter walls and similar structural
+    /// pieces that should read as masonry rather than test geometry.
+    Stone,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct WorldBlock {
     pub center: Vec3Net,
     pub half_extents: Vec3Net,
+    #[serde(default)]
+    pub kind: BlockKind,
 }
 
 impl WorldBlock {
@@ -219,6 +408,15 @@ impl WorldBlock {
         Self {
             center,
             half_extents,
+            kind: BlockKind::Standard,
+        }
+    }
+
+    pub const fn stone(center: Vec3Net, half_extents: Vec3Net) -> Self {
+        Self {
+            center,
+            half_extents,
+            kind: BlockKind::Stone,
         }
     }
 
@@ -297,7 +495,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(ore_nodes.len(), 6);
+        assert!(
+            ore_nodes.len() >= 6,
+            "expected at least 6 ore nodes in the test world, got {}",
+            ore_nodes.len()
+        );
         for node in ore_nodes {
             for block in &world.blocks {
                 let min = block.min();

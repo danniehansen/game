@@ -161,7 +161,7 @@ fn failed_corner_step_does_not_push_player_off_current_cube() {
     controller.velocity = Vec3Net::new(4.0, 0.0, 0.0);
     controller.grounded = true;
     let grid = BlockGrid::build(&world);
-    controller.move_horizontal_with_step(&world, &grid, Axis::X, 0.2);
+    controller.move_horizontal_with_step(&grid, Axis::X, 0.2);
 
     assert!(controller.position.x <= 1.25);
     assert_eq!(controller.position.y, 0.6);
@@ -184,14 +184,7 @@ fn collision_resolution_does_not_cascade_across_nearby_blocks() {
     let mut velocity = Vec3Net::new(0.0, 0.0, -5.0);
     let grid = BlockGrid::build(&world);
 
-    let result = move_with_collisions(
-        &mut position,
-        &mut velocity,
-        &world,
-        &grid,
-        Axis::Z,
-        -0.0417,
-    );
+    let result = move_with_collisions(&mut position, &mut velocity, &grid, Axis::Z, -0.0417);
 
     assert!(!result.collided);
     assert!((position.z - -6.217964).abs() < 0.001);
@@ -212,14 +205,7 @@ fn collision_resolution_ignores_adjacent_face_not_crossed_by_axis_move() {
     let mut velocity = Vec3Net::new(0.0, 0.0, -0.5666593);
     let grid = BlockGrid::build(&world);
 
-    let result = move_with_collisions(
-        &mut position,
-        &mut velocity,
-        &world,
-        &grid,
-        Axis::Z,
-        -0.0047,
-    );
+    let result = move_with_collisions(&mut position, &mut velocity, &grid, Axis::Z, -0.0047);
 
     assert!(result.collided);
     assert!((position.z - -4.85).abs() < 0.001);
@@ -240,14 +226,7 @@ fn collision_resolution_allows_sliding_out_of_current_axis_overlap() {
     let mut velocity = Vec3Net::new(0.0, 0.0, -4.5498476);
     let grid = BlockGrid::build(&world);
 
-    let result = move_with_collisions(
-        &mut position,
-        &mut velocity,
-        &world,
-        &grid,
-        Axis::Z,
-        -0.0297,
-    );
+    let result = move_with_collisions(&mut position, &mut velocity, &grid, Axis::Z, -0.0297);
 
     assert!(!result.collided);
     assert!((position.z - -6.757908).abs() < 0.001);

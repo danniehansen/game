@@ -57,32 +57,27 @@ pub(crate) fn spawn_node_death(
     material: Handle<StandardMaterial>,
     player_position: Option<Vec3>,
 ) {
-    match model {
-        ResourceNodeModel::PineTree
-        | ResourceNodeModel::BirchTree
-        | ResourceNodeModel::DeadTree => {
-            spawn_tree_felling(
-                commands,
-                materials,
-                node_id,
-                model,
-                transform,
-                mesh,
-                material,
-                player_position,
-            );
-        }
-        ResourceNodeModel::CoalOre | ResourceNodeModel::IronOre | ResourceNodeModel::SulfurOre => {
-            let _ = (mesh, material);
-            spawn_ore_shatter(
-                commands,
-                impact_assets,
-                camera_kick,
-                node_id,
-                transform,
-                player_position,
-            );
-        }
+    if model.is_tree() {
+        spawn_tree_felling(
+            commands,
+            materials,
+            node_id,
+            model,
+            transform,
+            mesh,
+            material,
+            player_position,
+        );
+    } else {
+        let _ = (mesh, material);
+        spawn_ore_shatter(
+            commands,
+            impact_assets,
+            camera_kick,
+            node_id,
+            transform,
+            player_position,
+        );
     }
 }
 

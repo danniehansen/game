@@ -128,13 +128,13 @@ impl PlayerController {
         // worlds the substep loop hits the grid many times, so amortising
         // a single build across all of them is a big win.
         let grid = BlockGrid::build(world);
-        self.simulate_with_grid(delta_seconds, world, &grid);
+        self.simulate_with_grid(delta_seconds, &grid);
     }
 
     /// Same as [`simulate`] but takes a pre-built [`BlockGrid`]. Use this from
     /// hot loops (server tick, client prediction) that already keep a grid
-    /// alongside their `WorldData` — avoids rebuilding the grid every call.
-    pub fn simulate_with_grid(&mut self, delta_seconds: f32, world: &WorldData, grid: &BlockGrid) {
+    /// alongside their world data — avoids rebuilding the grid every call.
+    pub fn simulate_with_grid(&mut self, delta_seconds: f32, grid: &BlockGrid) {
         let mut remaining = if delta_seconds.is_finite() {
             delta_seconds.clamp(0.0, MAX_SIMULATION_DELTA)
         } else {
@@ -146,7 +146,7 @@ impl PlayerController {
 
         while remaining > 0.0 {
             let step = remaining.min(MAX_SIMULATION_STEP);
-            self.simulate_step(step, world, grid);
+            self.simulate_step(step, grid);
             remaining -= step;
         }
     }
@@ -159,10 +159,10 @@ impl PlayerController {
         )
     }
 
-    fn simulate_step(&mut self, delta_seconds: f32, world: &WorldData, grid: &BlockGrid) {
+    fn simulate_step(&mut self, delta_seconds: f32, grid: &BlockGrid) {
         self.health = self.health.clamp(0.0, MAX_HEALTH);
 
-        self.grounded = is_supported(self.position, world, grid);
+        self.grounded = is_supported(self.position, grid);
         if self.grounded {
             self.coyote_timer = COYOTE_TIME_SECONDS;
         } else {
@@ -196,11 +196,11 @@ impl PlayerController {
         }
 
         let x_delta = self.velocity.x * delta_seconds;
-        self.move_horizontal_with_step(world, grid, Axis::X, x_delta);
+        self.move_horizontal_with_step(grid, Axis::X, x_delta);
         let z_delta = self.velocity.z * delta_seconds;
-        self.move_horizontal_with_step(world, grid, Axis::Z, z_delta);
+        self.move_horizontal_with_step(grid, Axis::Z, z_delta);
 
-        if self.grounded && !is_supported(self.position, world, grid) {
+        if self.grounded && !is_supported(self.position, grid) {
             self.grounded = false;
         }
 
@@ -214,12 +214,11 @@ impl PlayerController {
         let movement = move_with_collisions(
             &mut self.position,
             &mut self.velocity,
-            world,
             grid,
             Axis::Y,
             y_delta,
         );
-        self.grounded = movement.landed || is_supported(self.position, world, grid);
+        self.grounded = movement.landed || is_supported(self.position, grid);
         self.step_view_offset_y = approach(
             self.step_view_offset_y,
             0.0,
@@ -227,35 +226,23 @@ impl PlayerController {
         );
     }
 
-    fn move_horizontal_with_step(
-        &mut self,
-        world: &WorldData,
-        grid: &BlockGrid,
-        axis: Axis,
-        delta: f32,
-    ) {
+    fn move_horizontal_with_step(&mut self, grid: &BlockGrid, axis: Axis, delta: f32) {
         if delta == 0.0 {
             return;
         }
 
         let start_position = self.position;
         let start_velocity = self.velocity;
-        let movement = move_with_collisions(
-            &mut self.position,
-            &mut self.velocity,
-            world,
-            grid,
-            axis,
-            delta,
-        );
+        let movement =
+            move_with_collisions(&mut self.position, &mut self.velocity, grid, axis, delta);
         if !movement.collided || !self.grounded || start_velocity.y > 0.0 {
             return;
         }
 
-        if !self.try_step_up(start_position, start_velocity, world, grid, axis, delta)
+        if !self.try_step_up(start_position, start_velocity, grid, axis, delta)
             && start_position.y > GROUND_EPSILON
-            && is_supported(start_position, world, grid)
-            && !is_supported(self.position, world, grid)
+            && is_supported(start_position, grid)
+            && !is_supported(self.position, grid)
         {
             self.position = start_position;
             self.velocity = start_velocity;
@@ -271,14 +258,13 @@ impl PlayerController {
         &mut self,
         start_position: Vec3Net,
         start_velocity: Vec3Net,
-        world: &WorldData,
         grid: &BlockGrid,
         axis: Axis,
         delta: f32,
     ) -> bool {
         let mut stepped_position = start_position;
         stepped_position.y += STEP_HEIGHT;
-        if player_overlaps_world(stepped_position, world, grid) {
+        if player_overlaps_world(stepped_position, grid) {
             return false;
         }
 
@@ -286,7 +272,6 @@ impl PlayerController {
         let horizontal = move_with_collisions(
             &mut stepped_position,
             &mut stepped_velocity,
-            world,
             grid,
             axis,
             delta,
@@ -297,7 +282,6 @@ impl PlayerController {
 
         let Some(support_y) = support_height_between(
             stepped_position,
-            world,
             grid,
             start_position.y - GROUND_EPSILON,
             start_position.y + STEP_HEIGHT + GROUND_EPSILON,
@@ -311,7 +295,7 @@ impl PlayerController {
         }
 
         stepped_position.y = support_y;
-        if player_overlaps_world(stepped_position, world, grid) {
+        if player_overlaps_world(stepped_position, grid) {
             return false;
         }
 

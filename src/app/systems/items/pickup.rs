@@ -26,6 +26,12 @@ pub(crate) fn update_pickup_target_system(
         return;
     }
 
+    // Re-project the existing target's world anchor every frame so the
+    // tooltip stays glued to the world position as the camera moves. The
+    // O(N×M) target selection below stays throttled; only the cheap
+    // viewport projection runs each frame.
+    reproject_screen_position(&mut pickup_target, &camera);
+
     // Throttle the O(N×M) sweep over dropped items and resource nodes to a
     // fixed cadence — tooltip targeting doesn't need to update every render
     // frame and the early-exit work in `pickup_score`/`resource_node_score`
@@ -69,6 +75,15 @@ pub(crate) fn update_pickup_target_system(
         (None, None) => {
             pickup_target.clear();
         }
+    }
+}
+
+fn reproject_screen_position(
+    pickup_target: &mut PickupTargetState,
+    camera: &Query<(&Camera, &Transform), With<MainCamera>>,
+) {
+    if let Some(anchor) = pickup_target.world_position {
+        pickup_target.screen_position = viewport_position(camera, anchor);
     }
 }
 

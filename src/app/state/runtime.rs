@@ -9,9 +9,34 @@ use crate::{
     protocol::{
         ChatMessage, ClientId, PlayerEvent, PlayerState, ServerMessage, Vec3Net, WorldSnapshot,
     },
+    resources::{resource_node_definition, tree_collider},
     save::WorldStore,
-    world::WorldData,
+    world::{WorldBlock, WorldData},
 };
+
+/// Cheap order-independent fingerprint of the live tree set. Used by the
+/// snapshot handler to skip rebuilding the collision grid when the set of
+/// trees didn't change. XOR of node IDs + count is good enough — the only
+/// way it collides in practice is two trees being added and two different
+/// trees being removed in the same tick, which can't happen during play.
+fn tree_collider_set_version(snapshot: Option<&WorldSnapshot>) -> u64 {
+    let Some(snapshot) = snapshot else {
+        return 0;
+    };
+    let mut hash: u64 = 0;
+    let mut count: u64 = 0;
+    for node in &snapshot.resource_nodes {
+        let is_tree = resource_node_definition(&node.definition_id)
+            .map(|d| d.model.is_tree())
+            .unwrap_or(false);
+        if !is_tree {
+            continue;
+        }
+        hash ^= node.id;
+        count += 1;
+    }
+    hash.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(count)
+}
 
 pub(super) const MAX_CLIENT_LOG_MESSAGES: usize = 80;
 
@@ -70,6 +95,10 @@ pub(crate) struct ClientRuntime {
     pub(crate) predicted_local: Option<PlayerController>,
     pub(crate) messages: Vec<ClientLogEntry>,
     pub(crate) input_sequence: u64,
+    /// Hash of the live tree set used to detect when the `world_grid` needs
+    /// to be rebuilt. Only changes when a tree spawns or is felled — most
+    /// snapshots keep the same set and skip the rebuild.
+    pub(crate) tree_collider_version: u64,
 }
 
 #[derive(Resource, Default)]
@@ -133,6 +162,7 @@ impl ClientRuntime {
         self.predicted_local = None;
         self.messages.clear();
         self.input_sequence = 0;
+        self.tree_collider_version = 0;
     }
 
     pub(crate) fn shutdown_in_background(
@@ -156,6 +186,29 @@ impl ClientRuntime {
         self.world_version = self.world_version.wrapping_add(1);
         self.predicted_local = None;
         self.is_admin = false;
+        self.tree_collider_version = 0;
+    }
+
+    /// Rebuilds the world collision grid from the current world plus any
+    /// live tree trunks present in the latest snapshot. Called after Welcome
+    /// and whenever the live tree set changes (a tree spawns or is felled).
+    fn rebuild_world_grid(&mut self) {
+        let Some(world) = self.world.as_ref() else {
+            self.world_grid = None;
+            return;
+        };
+        let extras: Vec<WorldBlock> = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .resource_nodes
+                    .iter()
+                    .filter_map(tree_collider)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.world_grid = Some(BlockGrid::build_with_extras(world, &extras));
     }
 
     pub(crate) fn apply_message(&mut self, message: ServerMessage) {
@@ -169,11 +222,12 @@ impl ClientRuntime {
             } => {
                 self.client_id = Some(client_id);
                 self.is_admin = is_admin;
-                self.world_grid = Some(BlockGrid::build(&world));
                 self.world = Some(world);
                 self.world_version = self.world_version.wrapping_add(1);
                 self.seed_local_prediction_from_snapshot(&snapshot, true);
                 self.snapshot = Some(snapshot);
+                self.rebuild_world_grid();
+                self.tree_collider_version = tree_collider_set_version(self.snapshot.as_ref());
                 self.push_system_message(format!("connected as player {client_id}"));
             }
             ServerMessage::AuthRejected { reason } => {
@@ -191,6 +245,14 @@ impl ClientRuntime {
                     return;
                 }
                 self.snapshot = Some(snapshot);
+                // Trees can die between snapshots (felled by other players).
+                // Rebuild the collision grid only when the live tree set
+                // actually changes — every snapshot would be wasted work.
+                let new_version = tree_collider_set_version(self.snapshot.as_ref());
+                if new_version != self.tree_collider_version {
+                    self.tree_collider_version = new_version;
+                    self.rebuild_world_grid();
+                }
             }
             ServerMessage::Correction(player) => {
                 self.apply_non_movement_correction(&player);

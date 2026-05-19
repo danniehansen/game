@@ -108,13 +108,23 @@ pub(super) fn resource_node_transform(
     node: &ResourceNodeState,
     model: ResourceNodeModel,
 ) -> Transform {
+    // Trees bake their full size into the mesh and sit on the ground at
+    // unit scale, which keeps each variant a single canonical mesh that
+    // can be GPU-instanced. Ore nodes keep their per-instance scale
+    // jitter for shape variety.
     let (height_offset, scale) = match model {
         ResourceNodeModel::CoalOre => (0.34, Vec3::new(1.0, 1.0, 1.0)),
         ResourceNodeModel::IronOre => (0.36, Vec3::new(1.1, 1.05, 0.95)),
         ResourceNodeModel::SulfurOre => (0.32, Vec3::new(0.96, 0.92, 1.06)),
-        ResourceNodeModel::PineTree => (0.0, Vec3::new(1.0, 1.16, 1.0)),
-        ResourceNodeModel::BirchTree => (0.0, Vec3::new(0.82, 1.0, 0.82)),
-        ResourceNodeModel::DeadTree => (0.0, Vec3::new(0.72, 0.86, 0.72)),
+        ResourceNodeModel::PineTreeSmall
+        | ResourceNodeModel::PineTreeMedium
+        | ResourceNodeModel::PineTreeLarge
+        | ResourceNodeModel::BirchTreeSmall
+        | ResourceNodeModel::BirchTreeMedium
+        | ResourceNodeModel::BirchTreeLarge
+        | ResourceNodeModel::DeadTreeSmall
+        | ResourceNodeModel::DeadTreeMedium
+        | ResourceNodeModel::DeadTreeLarge => (0.0, Vec3::ONE),
     };
     Transform::from_xyz(
         node.position.x,
@@ -137,16 +147,40 @@ fn resource_node_visual(
             assets.sulfur_node_mesh.clone(),
             assets.sulfur_material.clone(),
         ),
-        ResourceNodeModel::PineTree => (
-            assets.pine_tree_mesh.clone(),
+        ResourceNodeModel::PineTreeSmall => (
+            assets.pine_tree_small_mesh.clone(),
             assets.vertex_material.clone(),
         ),
-        ResourceNodeModel::BirchTree => (
-            assets.birch_tree_mesh.clone(),
+        ResourceNodeModel::PineTreeMedium => (
+            assets.pine_tree_medium_mesh.clone(),
             assets.vertex_material.clone(),
         ),
-        ResourceNodeModel::DeadTree => (
-            assets.dead_tree_mesh.clone(),
+        ResourceNodeModel::PineTreeLarge => (
+            assets.pine_tree_large_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::BirchTreeSmall => (
+            assets.birch_tree_small_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::BirchTreeMedium => (
+            assets.birch_tree_medium_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::BirchTreeLarge => (
+            assets.birch_tree_large_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::DeadTreeSmall => (
+            assets.dead_tree_small_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::DeadTreeMedium => (
+            assets.dead_tree_medium_mesh.clone(),
+            assets.vertex_material.clone(),
+        ),
+        ResourceNodeModel::DeadTreeLarge => (
+            assets.dead_tree_large_mesh.clone(),
             assets.vertex_material.clone(),
         ),
     }

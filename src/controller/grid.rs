@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{protocol::Vec3Net, world::WorldData};
+use crate::{
+    protocol::Vec3Net,
+    world::{WorldBlock, WorldData},
+};
 
 use super::{PLAYER_HEIGHT, PLAYER_RADIUS};
 
@@ -10,20 +13,33 @@ use super::{PLAYER_HEIGHT, PLAYER_RADIUS};
 /// for very dense fields of small blocks.
 const CELL_SIZE: f32 = 4.0;
 
-/// Uniform spatial hash over `WorldData::blocks`. The grid stores indices into
-/// `WorldData::blocks` keyed by `(cell_x, cell_z)` cells in the horizontal
-/// plane — vertical extent is unbounded per cell because the world is mostly
-/// "flat with stuff on top." Built once per world load and consulted by the
-/// collision routines instead of a linear `for block in &world.blocks` scan.
+/// Uniform spatial hash over collidable AABBs. The grid owns its own block
+/// list so it can mix static `WorldData::blocks` with dynamic colliders
+/// (e.g. live tree trunks from the current snapshot). Cells are keyed by
+/// `(cell_x, cell_z)` in the horizontal plane — vertical extent is unbounded
+/// per cell because the world is mostly "flat with stuff on top." Built or
+/// rebuilt by the runtime; consulted by the collision routines.
 #[derive(Debug, Clone, Default)]
 pub struct BlockGrid {
+    blocks: Vec<WorldBlock>,
     cells: HashMap<(i32, i32), Vec<u32>>,
 }
 
 impl BlockGrid {
     pub fn build(world: &WorldData) -> Self {
+        Self::build_with_extras(world, &[])
+    }
+
+    /// Same as [`build`] but mixes additional collider blocks into the grid.
+    /// Use this on the client to compose static world geometry with
+    /// per-frame dynamic colliders such as live tree trunks.
+    pub fn build_with_extras(world: &WorldData, extras: &[WorldBlock]) -> Self {
+        let mut blocks = Vec::with_capacity(world.blocks.len() + extras.len());
+        blocks.extend_from_slice(&world.blocks);
+        blocks.extend_from_slice(extras);
+
         let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
-        for (index, block) in world.blocks.iter().enumerate() {
+        for (index, block) in blocks.iter().enumerate() {
             let min = block.min();
             let max = block.max();
             let (cell_min_x, cell_min_z) = cell_for(min.x, min.z);
@@ -37,7 +53,14 @@ impl BlockGrid {
                 }
             }
         }
-        Self { cells }
+        Self { blocks, cells }
+    }
+
+    /// Returns the block stored at `index`. Collision routines read through
+    /// this rather than indexing into `WorldData::blocks` directly so they
+    /// transparently see both static blocks and dynamic extras.
+    pub fn block(&self, index: usize) -> WorldBlock {
+        self.blocks[index]
     }
 
     /// Yields candidate block indices that could overlap a player AABB
