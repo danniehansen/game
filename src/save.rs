@@ -7,16 +7,31 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{protocol::SteamId, world::MapType};
+use crate::{
+    protocol::{
+        ClientId, DroppedItemId, DroppedWorldItem, PlayerInventoryState, ResourceNodeState,
+        SteamId, Vec3Net,
+    },
+    world::MapType,
+};
 
 const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "Game";
 const APPLICATION: &str = "Game";
+
+const SAVE_EXTENSION: &str = "save";
+const SAVE_MAGIC: &[u8; 8] = b"GAMESAVE";
+/// Bump on every breaking change to the on-disk schema. Old saves with a
+/// different version are rejected; there is no migration path.
+const SAVE_FORMAT_VERSION: u32 = 1;
+/// zstd level 5 sits in the sweet spot for save files: ~70-75% size reduction
+/// at >100MB/s compression and ~1GB/s decompression.
+const ZSTD_LEVEL: i32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct WorldStore {
@@ -52,7 +67,7 @@ impl WorldStore {
         {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            if path.extension().and_then(|ext| ext.to_str()) != Some(SAVE_EXTENSION) {
                 continue;
             }
 
@@ -122,13 +137,12 @@ impl WorldStore {
     }
 
     fn world_path(&self, id: Uuid) -> PathBuf {
-        self.root.join(format!("{id}.json"))
+        self.root.join(format!("{id}.{SAVE_EXTENSION}"))
     }
 
     fn load_world_file(&self, path: &Path) -> Result<WorldSave> {
-        let json = fs::read_to_string(path)
-            .with_context(|| format!("could not read {}", path.display()))?;
-        serde_json::from_str(&json).with_context(|| format!("could not parse {}", path.display()))
+        let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+        decode_world_save(&bytes).with_context(|| format!("could not parse {}", path.display()))
     }
 }
 
@@ -138,16 +152,53 @@ pub fn save_world_file(path: &Path, save: &WorldSave) -> Result<()> {
             .with_context(|| format!("could not create world directory {}", parent.display()))?;
     }
 
-    let json = serde_json::to_string_pretty(save).context("could not serialize world save")?;
-    write_file_atomically(path, json.as_bytes())
+    let bytes = encode_world_save(save).context("could not serialize world save")?;
+    write_file_atomically(path, &bytes)
         .with_context(|| format!("could not write world {}", path.display()))
+}
+
+pub fn load_world_file(path: &Path) -> Result<WorldSave> {
+    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    decode_world_save(&bytes).with_context(|| format!("could not parse {}", path.display()))
+}
+
+fn encode_world_save(save: &WorldSave) -> Result<Vec<u8>> {
+    let payload = postcard::to_allocvec(save).context("could not postcard-encode world save")?;
+    let compressed = zstd::stream::encode_all(payload.as_slice(), ZSTD_LEVEL)
+        .context("could not zstd-compress world save")?;
+
+    let mut out = Vec::with_capacity(SAVE_MAGIC.len() + 4 + compressed.len());
+    out.extend_from_slice(SAVE_MAGIC);
+    out.extend_from_slice(&SAVE_FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&compressed);
+    Ok(out)
+}
+
+fn decode_world_save(bytes: &[u8]) -> Result<WorldSave> {
+    if bytes.len() < SAVE_MAGIC.len() + 4 {
+        bail!("save file is truncated");
+    }
+    if &bytes[..SAVE_MAGIC.len()] != SAVE_MAGIC {
+        bail!("save file does not have a GAMESAVE header");
+    }
+    let version_bytes: [u8; 4] = bytes[SAVE_MAGIC.len()..SAVE_MAGIC.len() + 4]
+        .try_into()
+        .map_err(|_| anyhow!("save file version field is malformed"))?;
+    let version = u32::from_le_bytes(version_bytes);
+    if version != SAVE_FORMAT_VERSION {
+        bail!("save file version {version} is not supported (expected {SAVE_FORMAT_VERSION})");
+    }
+
+    let compressed = &bytes[SAVE_MAGIC.len() + 4..];
+    let payload =
+        zstd::stream::decode_all(compressed).context("could not zstd-decompress world save")?;
+    postcard::from_bytes(&payload).context("could not postcard-decode world save")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorldSave {
     pub id: Uuid,
     pub name: String,
-    #[serde(default)]
     pub map: MapType,
     pub created_at_unix: u64,
     pub admins: Vec<SteamId>,
@@ -180,6 +231,34 @@ impl WorldSave {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct WorldStateSave {
     pub last_authoritative_tick: u64,
+    pub players: Vec<PersistedPlayer>,
+    pub dropped_items: Vec<DroppedWorldItem>,
+    /// `None` while the world has never been hosted; once a server runs, this
+    /// is always `Some` (even if empty) so harvested resources don't respawn.
+    pub resource_nodes: Option<Vec<ResourceNodeState>>,
+    #[serde(default = "default_next_id")]
+    pub next_dropped_item_id: DroppedItemId,
+    #[serde(default = "default_next_id")]
+    pub next_client_id: ClientId,
+}
+
+fn default_next_id() -> u64 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PersistedPlayer {
+    pub steam_id: SteamId,
+    pub name: String,
+    pub position: Vec3Net,
+    pub velocity: Vec3Net,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub health: f32,
+    pub grounded: bool,
+    pub last_processed_input: u64,
+    pub is_admin: bool,
+    pub inventory: PlayerInventoryState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -305,7 +384,10 @@ fn atomic_backup_path(path: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::ProceduralMapSize;
+    use crate::{
+        protocol::{ItemStack, PlayerInventoryState},
+        world::ProceduralMapSize,
+    };
 
     fn temp_store() -> WorldStore {
         WorldStore::new(std::env::temp_dir().join(format!("game-save-test-{}", Uuid::new_v4())))
@@ -369,13 +451,13 @@ mod tests {
     #[test]
     fn save_world_file_writes_custom_paths() {
         let root = std::env::temp_dir().join(format!("game-save-file-test-{}", Uuid::new_v4()));
-        let path = root.join("nested").join("world.json");
+        let path = root.join("nested").join("world.save");
         let save = WorldSave::new("Dedicated File", Some(123));
 
         save_world_file(&path, &save).expect("world file should save");
 
-        let json = fs::read_to_string(&path).expect("world file should exist");
-        let loaded: WorldSave = serde_json::from_str(&json).expect("world file should parse");
+        let bytes = fs::read(&path).expect("world file should exist");
+        let loaded = decode_world_save(&bytes).expect("world file should parse");
         assert_eq!(loaded.id, save.id);
         assert_eq!(loaded.name, "Dedicated File");
 
@@ -429,49 +511,55 @@ mod tests {
     }
 
     #[test]
-    fn old_seeded_saves_load_as_test_maps() {
-        let id = Uuid::new_v4();
-        let json = format!(
-            r#"{{
-                "id": "{id}",
-                "name": "Old World",
-                "seed": 123,
-                "created_at_unix": 1,
-                "admins": [123],
-                "world": {{"floor_size": 80.0, "blocks": []}},
-                "state": {{"last_authoritative_tick": 5}}
-            }}"#
-        );
+    fn full_state_round_trips_through_binary_format() {
+        let store = temp_store();
+        let mut save = store
+            .create_world("Stateful", Some(42))
+            .expect("world should be created");
 
-        let save: WorldSave = serde_json::from_str(&json).expect("old save should load");
+        let mut inventory = PlayerInventoryState::empty();
+        inventory.active_actionbar_slot = 3;
+        inventory.actionbar_slots[3] = Some(ItemStack {
+            item_id: "test.item".into(),
+            quantity: 7,
+        });
 
-        assert_eq!(save.id, id);
-        assert_eq!(save.map, MapType::Test);
-        assert_eq!(save.state.last_authoritative_tick, 5);
+        save.state.last_authoritative_tick = 12345;
+        save.state.players.push(PersistedPlayer {
+            steam_id: 42,
+            name: "Tester".to_owned(),
+            position: Vec3Net::new(1.0, 2.5, -3.0),
+            velocity: Vec3Net::new(0.1, 0.0, 0.2),
+            yaw: 1.2,
+            pitch: -0.4,
+            health: 87.5,
+            grounded: true,
+            last_processed_input: 9000,
+            is_admin: true,
+            inventory,
+        });
+        save.state.resource_nodes = Some(Vec::new());
+        save.state.next_dropped_item_id = 99;
+        save.state.next_client_id = 5;
+
+        store.save_world(&save).expect("save should write");
+
+        let loaded = store.load_world(save.id).expect("save should load");
+        assert_eq!(loaded.state, save.state);
     }
 
     #[test]
-    fn old_procedural_maps_default_to_medium_size() {
-        let id = Uuid::new_v4();
-        let json = format!(
-            r#"{{
-                "id": "{id}",
-                "name": "Old Procedural",
-                "map": {{"procedural": {{"seed": 123}}}},
-                "created_at_unix": 1,
-                "admins": [123],
-                "state": {{"last_authoritative_tick": 5}}
-            }}"#
-        );
+    fn rejects_files_without_magic_header() {
+        let err = decode_world_save(b"not a save file at all").unwrap_err();
+        assert!(err.to_string().contains("GAMESAVE"));
+    }
 
-        let save: WorldSave = serde_json::from_str(&json).expect("old save should load");
-
-        assert_eq!(
-            save.map,
-            MapType::Procedural {
-                seed: 123,
-                size: ProceduralMapSize::Medium,
-            }
-        );
+    #[test]
+    fn rejects_mismatched_format_version() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(SAVE_MAGIC);
+        bytes.extend_from_slice(&999u32.to_le_bytes());
+        let err = decode_world_save(&bytes).unwrap_err();
+        assert!(err.to_string().contains("version 999"));
     }
 }

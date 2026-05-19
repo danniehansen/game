@@ -8,7 +8,7 @@ use crate::{
         DroppedWorldItem, InventoryCommand, ItemStack, PlayerInventoryState, ResourceNodeId,
         ResourceNodeState, ServerMessage, SteamId, ToastKind, ToastMessage, Vec3Net, sanitize_chat,
     },
-    save::WorldSave,
+    save::{PersistedPlayer, WorldSave, WorldStateSave},
     steam::AuthMode,
     world::WorldData,
 };
@@ -61,6 +61,10 @@ pub struct GameServer {
     settings: ServerSettings,
     clients: HashMap<ClientId, ServerClient>,
     steam_to_client: HashMap<SteamId, ClientId>,
+    /// Players who have ever been seen on this server, keyed by Steam ID. A
+    /// disconnect or shutdown writes back into this map so a returning player
+    /// picks up their inventory, position, and admin status.
+    persisted_players: HashMap<SteamId, PersistedPlayer>,
     dropped_items: HashMap<DroppedItemId, DroppedItemBody>,
     dropped_item_physics: DroppedItemPhysics,
     resource_nodes: HashMap<ResourceNodeId, ResourceNodeState>,
@@ -78,8 +82,36 @@ impl GameServer {
         }
         let world = save.map.world_data();
         let world_grid = BlockGrid::build(&world);
-        let dropped_item_physics = DroppedItemPhysics::new(&world);
-        let resource_nodes = resource_nodes::initial_resource_nodes(&world);
+        let mut dropped_item_physics = DroppedItemPhysics::new(&world);
+
+        // Resource nodes: trust the saved state once a world has ever been
+        // hosted (so harvested resources don't respawn). For brand-new worlds
+        // the save has `None` and we seed from the world definition.
+        let resource_nodes = match save.state.resource_nodes.take() {
+            Some(saved) => saved.into_iter().map(|node| (node.id, node)).collect(),
+            None => resource_nodes::initial_resource_nodes(&world),
+        };
+
+        let mut dropped_items = HashMap::new();
+        for item in std::mem::take(&mut save.state.dropped_items) {
+            let physics_body =
+                dropped_item_physics.spawn_body(item.position, Vec3Net::ZERO, item.yaw);
+            dropped_items.insert(
+                item.id,
+                DroppedItemBody {
+                    item,
+                    body_handle: physics_body.body_handle,
+                },
+            );
+        }
+
+        let persisted_players = std::mem::take(&mut save.state.players)
+            .into_iter()
+            .map(|player| (player.steam_id, player))
+            .collect();
+
+        let next_dropped_item_id = save.state.next_dropped_item_id.max(1);
+        let next_client_id = save.state.next_client_id.max(1);
 
         Self {
             tick: save.state.last_authoritative_tick,
@@ -89,18 +121,52 @@ impl GameServer {
             settings,
             clients: HashMap::new(),
             steam_to_client: HashMap::new(),
-            dropped_items: HashMap::new(),
+            persisted_players,
+            dropped_items,
             dropped_item_physics,
             resource_nodes,
-            next_dropped_item_id: 1,
-            next_client_id: 1,
+            next_dropped_item_id,
+            next_client_id,
         }
     }
 
     pub fn world_save(&self) -> WorldSave {
         let mut save = self.save.clone();
-        save.state.last_authoritative_tick = self.tick;
+        let mut persisted = self.persisted_players.clone();
+        // Capture any currently connected players' live state before writing.
+        for client in self.clients.values() {
+            persisted.insert(client.steam_id, persisted_player_from(client));
+        }
+        let mut players = persisted.into_values().collect::<Vec<_>>();
+        players.sort_by_key(|player| player.steam_id);
+
+        let mut dropped_items = self
+            .dropped_items
+            .values()
+            .map(|body| body.item.clone())
+            .collect::<Vec<_>>();
+        dropped_items.sort_by_key(|item| item.id);
+
+        let mut resource_nodes = self.resource_nodes.values().cloned().collect::<Vec<_>>();
+        resource_nodes.sort_by_key(|node| node.id);
+
+        save.state = WorldStateSave {
+            last_authoritative_tick: self.tick,
+            players,
+            dropped_items,
+            resource_nodes: Some(resource_nodes),
+            next_dropped_item_id: self.next_dropped_item_id,
+            next_client_id: self.next_client_id,
+        };
         save
+    }
+
+    pub(super) fn take_persisted_player(&mut self, steam_id: SteamId) -> Option<PersistedPlayer> {
+        self.persisted_players.remove(&steam_id)
+    }
+
+    pub(super) fn remember_player(&mut self, player: PersistedPlayer) {
+        self.persisted_players.insert(player.steam_id, player);
     }
 
     pub fn receive(&mut self, client_id: ClientId, message: ClientMessage) -> Vec<ServerEnvelope> {
@@ -445,15 +511,31 @@ pub(super) fn item_acquired_toast_envelopes(
 }
 
 #[derive(Debug)]
-struct ServerClient {
-    client_id: ClientId,
-    steam_id: SteamId,
-    name: String,
-    controller: PlayerController,
-    inventory: PlayerInventoryState,
-    is_admin: bool,
-    last_seen_tick: u64,
-    next_gather_tick: u64,
+pub(super) struct ServerClient {
+    pub(super) client_id: ClientId,
+    pub(super) steam_id: SteamId,
+    pub(super) name: String,
+    pub(super) controller: PlayerController,
+    pub(super) inventory: PlayerInventoryState,
+    pub(super) is_admin: bool,
+    pub(super) last_seen_tick: u64,
+    pub(super) next_gather_tick: u64,
+}
+
+pub(super) fn persisted_player_from(client: &ServerClient) -> PersistedPlayer {
+    PersistedPlayer {
+        steam_id: client.steam_id,
+        name: client.name.clone(),
+        position: client.controller.position,
+        velocity: client.controller.velocity,
+        yaw: client.controller.yaw,
+        pitch: client.controller.pitch,
+        health: client.controller.health,
+        grounded: client.controller.grounded,
+        last_processed_input: client.controller.last_processed_input,
+        is_admin: client.is_admin,
+        inventory: client.inventory.clone(),
+    }
 }
 
 #[cfg(test)]

@@ -176,3 +176,77 @@ fn kick_all_sends_reason_before_disconnects() {
     }));
     assert!(server.snapshot().players.is_empty());
 }
+
+#[test]
+fn world_save_round_trips_player_inventory_and_position() {
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+
+    let pose = PlayerMovement {
+        sequence: 1,
+        position: Vec3Net::new(12.0, 4.5, -7.0),
+        velocity: Vec3Net::ZERO,
+        yaw: 0.75,
+        pitch: -0.25,
+        grounded: true,
+    };
+    server.receive(client_id, ClientMessage::Movement(pose));
+
+    // Move an item onto the actionbar so we can verify inventory state
+    // survives a save/load cycle.
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Inventory(InventoryCommand::Move {
+            from: ItemContainerSlot {
+                container: crate::protocol::ItemContainer::Actionbar,
+                slot: 0,
+            },
+            to: ItemContainerSlot {
+                container: crate::protocol::ItemContainer::Actionbar,
+                slot: 4,
+            },
+            quantity: None,
+        }),
+    );
+    drop(envelopes);
+
+    let save = server.world_save();
+    assert_eq!(save.state.players.len(), 1);
+
+    let mut restored = GameServer::new(
+        save,
+        ServerSettings {
+            auth_mode: AuthMode::Offline,
+            singleplayer_host: Some(1),
+        },
+    );
+    let (restored_client_id, restored_envelopes) = restored
+        .connect(
+            PROTOCOL_VERSION,
+            Some(GAME_VERSION.to_owned()),
+            1,
+            "Host".to_owned(),
+            offline_auth_token(1),
+        )
+        .expect("returning host should reconnect");
+
+    let snapshot = restored.snapshot_for(restored_client_id);
+    let player = snapshot
+        .players
+        .iter()
+        .find(|player| player.client_id == restored_client_id)
+        .expect("restored client should appear in snapshot");
+    assert!((player.position.x - 12.0).abs() < f32::EPSILON);
+    assert!((player.position.y - 4.5).abs() < f32::EPSILON);
+    assert!((player.position.z + 7.0).abs() < f32::EPSILON);
+    assert!((player.yaw - 0.75).abs() < f32::EPSILON);
+
+    let inventory = player
+        .inventory
+        .as_ref()
+        .expect("snapshot should carry inventory for the receiving client");
+    assert!(inventory.actionbar_slots[0].is_none());
+    assert!(inventory.actionbar_slots[4].is_some());
+
+    drop(restored_envelopes);
+}

@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     DeliveryTarget, GameServer, ServerClient, ServerEnvelope, inventory::starting_inventory,
-    movement::clean_player_name,
+    movement::clean_player_name, persisted_player_from,
 };
 
 impl GameServer {
@@ -46,14 +46,33 @@ impl GameServer {
         let client_id = self.next_client_id;
         self.next_client_id += 1;
 
-        let is_admin = self.is_admin(steam_id);
+        // Returning players (saved on a prior shutdown or disconnect) keep
+        // their inventory, position, and admin status. Their last display
+        // name is overwritten with whatever the client provides this session.
+        let persisted = self.take_persisted_player(steam_id);
+        let is_admin = self.is_admin(steam_id) || persisted.as_ref().is_some_and(|p| p.is_admin);
         let name = clean_player_name(&display_name, client_id);
+        let (controller, inventory) = match persisted {
+            Some(player) => (
+                PlayerController::from_persisted(
+                    player.position,
+                    player.velocity,
+                    player.yaw,
+                    player.pitch,
+                    player.health,
+                    player.grounded,
+                    player.last_processed_input,
+                ),
+                player.inventory,
+            ),
+            None => (PlayerController::spawn(), starting_inventory()),
+        };
         let client = ServerClient {
             client_id,
             steam_id,
             name: name.clone(),
-            controller: PlayerController::spawn(),
-            inventory: starting_inventory(),
+            controller,
+            inventory,
             is_admin,
             last_seen_tick: self.tick,
             next_gather_tick: self.tick,
@@ -89,13 +108,17 @@ impl GameServer {
             return Vec::new();
         };
 
+        // Snapshot the client's live state before tearing them down so the
+        // next shutdown save (or reconnect) sees their final position and
+        // inventory, not the prior persisted copy.
+        let persisted = persisted_player_from(&client);
         self.steam_to_client.remove(&client.steam_id);
+        let name = client.name;
+        self.remember_player(persisted);
+
         vec![ServerEnvelope {
             target: DeliveryTarget::Broadcast,
-            message: ServerMessage::PlayerEvent(PlayerEvent::Left {
-                client_id,
-                name: client.name,
-            }),
+            message: ServerMessage::PlayerEvent(PlayerEvent::Left { client_id, name }),
         }]
     }
 

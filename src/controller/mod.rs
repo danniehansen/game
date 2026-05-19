@@ -93,6 +93,29 @@ impl PlayerController {
         controller
     }
 
+    pub fn from_persisted(
+        position: Vec3Net,
+        velocity: Vec3Net,
+        yaw: f32,
+        pitch: f32,
+        health: f32,
+        grounded: bool,
+        last_processed_input: u64,
+    ) -> Self {
+        let mut controller = Self::spawn();
+        controller.position = position;
+        controller.velocity = velocity;
+        controller.yaw = yaw;
+        controller.pitch = pitch;
+        controller.health = health;
+        controller.grounded = grounded;
+        controller.last_processed_input = last_processed_input;
+        controller.last_input.sequence = last_processed_input;
+        controller.last_input.yaw = yaw;
+        controller.last_input.pitch = pitch;
+        controller
+    }
+
     pub fn apply_input(&mut self, input: PlayerInput) {
         if input.sequence <= self.last_processed_input {
             return;
