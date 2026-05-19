@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     app::{
-        state::{ClientRuntime, MenuState, NoticeDialog, Screen, SessionShutdownTasks},
+        state::{ClientRuntime, MenuState, NoticeDialog, Screen, SessionShutdownTasks, ToastState},
         ui::ButtonSoundRequests,
     },
     protocol::ServerMessage,
@@ -13,7 +13,10 @@ pub(crate) fn network_tick_system(
     mut runtime: ResMut<ClientRuntime>,
     mut menu: ResMut<MenuState>,
     mut button_sound_requests: ResMut<ButtonSoundRequests>,
+    mut toasts: ResMut<ToastState>,
 ) {
+    toasts.tick(time.delta_secs());
+
     if !network_tick_allowed(&menu) {
         return;
     }
@@ -36,10 +39,14 @@ pub(crate) fn network_tick_system(
             runtime.apply_message(message.clone());
             runtime.stop_session_after_kick();
             show_kick_notice(&mut menu, reason.clone());
+            toasts.clear();
             continue;
         }
         if matches!(message, ServerMessage::ItemMerged { .. }) {
             button_sound_requests.push_hover();
+        }
+        if let ServerMessage::Toast(payload) = &message {
+            toasts.push_message(payload.clone());
         }
         runtime.apply_message(message);
     }

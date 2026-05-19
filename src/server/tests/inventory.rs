@@ -250,3 +250,80 @@ fn pickup_requires_looking_at_dropped_item_and_restores_inventory() {
         Some(TEST_RELIC_ID)
     );
 }
+
+#[test]
+fn pickup_emits_success_toast_to_requesting_client() {
+    use crate::protocol::{ServerMessage, ToastKind};
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+    let client = server
+        .clients
+        .get_mut(&client_id)
+        .expect("connected host should exist");
+    client.inventory.inventory_slots[0] = None;
+    client.inventory.actionbar_slots[0] = None;
+
+    server.spawn_dropped_item(
+        ItemStack::new(TEST_ORE_ID, 5),
+        Vec3Net::new(0.0, SERVER_EYE_HEIGHT - 0.28, -2.0),
+        Vec3Net::ZERO,
+        0.0,
+    );
+    let dropped_item_id = server.snapshot().dropped_items[0].id;
+
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Inventory(InventoryCommand::PickUp { dropped_item_id }),
+    );
+
+    let toast = envelopes
+        .iter()
+        .find_map(|envelope| match &envelope.message {
+            ServerMessage::Toast(payload) => Some((envelope.target.clone(), payload.clone())),
+            _ => None,
+        })
+        .expect("server should emit a Toast envelope on successful pickup");
+
+    assert_eq!(toast.0, super::DeliveryTarget::Client(client_id));
+    assert_eq!(toast.1.kind, ToastKind::Success);
+    assert!(
+        toast.1.text.starts_with("+5 "),
+        "toast text should report accepted quantity, got {}",
+        toast.1.text
+    );
+}
+
+#[test]
+fn failed_pickup_emits_no_toast() {
+    use crate::protocol::ServerMessage;
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+
+    server.spawn_dropped_item(
+        ItemStack::new(TEST_ORE_ID, 3),
+        Vec3Net::new(0.0, SERVER_EYE_HEIGHT - 0.28, -2.0),
+        Vec3Net::ZERO,
+        0.0,
+    );
+    let dropped_item_id = server.snapshot().dropped_items[0].id;
+
+    // Turn the player around so the dropped item is behind them; the pickup
+    // line-of-sight check rejects the request and no toast should fire.
+    let mut look_away = movement(1, Vec3Net::ZERO);
+    look_away.yaw = std::f32::consts::PI;
+    server.receive(client_id, ClientMessage::Movement(look_away));
+
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Inventory(InventoryCommand::PickUp { dropped_item_id }),
+    );
+
+    assert!(
+        !envelopes
+            .iter()
+            .any(|envelope| matches!(envelope.message, ServerMessage::Toast(_))),
+        "rejected pickup should not push a toast"
+    );
+}

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use crate::{
     controller::{BlockGrid, PlayerController},
-    items::{can_pick_up, normalize_stack, stack_limit},
+    items::{ItemId, can_pick_up, item_definition, normalize_stack, stack_limit},
     protocol::{
         ACTIONBAR_SLOT_COUNT, ChatMessage, ClientId, ClientMessage, DroppedItemId,
         DroppedWorldItem, InventoryCommand, ItemStack, PlayerInventoryState, ResourceNodeId,
-        ResourceNodeState, ServerMessage, SteamId, Vec3Net, sanitize_chat,
+        ResourceNodeState, ServerMessage, SteamId, ToastKind, ToastMessage, Vec3Net, sanitize_chat,
     },
     save::WorldSave,
     steam::AuthMode,
@@ -131,14 +131,8 @@ impl GameServer {
                 })
                 .into_iter()
                 .collect(),
-            ClientMessage::Inventory(command) => {
-                self.apply_inventory_command(client_id, command);
-                Vec::new()
-            }
-            ClientMessage::Gather(command) => {
-                self.apply_gather_command(client_id, command);
-                Vec::new()
-            }
+            ClientMessage::Inventory(command) => self.apply_inventory_command(client_id, command),
+            ClientMessage::Gather(command) => self.apply_gather_command(client_id, command),
             ClientMessage::Heartbeat => Vec::new(),
             ClientMessage::Disconnect => self.disconnect(client_id),
         }
@@ -230,12 +224,17 @@ impl GameServer {
             .collect()
     }
 
-    fn apply_inventory_command(&mut self, client_id: ClientId, command: InventoryCommand) {
+    fn apply_inventory_command(
+        &mut self,
+        client_id: ClientId,
+        command: InventoryCommand,
+    ) -> Vec<ServerEnvelope> {
         match command {
             InventoryCommand::Move { from, to, quantity } => {
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     move_stack(&mut client.inventory, from, to, quantity);
                 }
+                Vec::new()
             }
             InventoryCommand::Drop { from, quantity } => {
                 let Some((stack, position, velocity, yaw)) =
@@ -250,12 +249,13 @@ impl GameServer {
                         })
                     })
                 else {
-                    return;
+                    return Vec::new();
                 };
                 self.spawn_dropped_item(stack, position, velocity, yaw);
+                Vec::new()
             }
             InventoryCommand::PickUp { dropped_item_id } => {
-                self.pick_up_dropped_item(client_id, dropped_item_id);
+                self.pick_up_dropped_item(client_id, dropped_item_id)
             }
             InventoryCommand::SelectActionbarSlot { slot } => {
                 if slot < ACTIONBAR_SLOT_COUNT
@@ -263,12 +263,14 @@ impl GameServer {
                 {
                     client.inventory.active_actionbar_slot = slot;
                 }
+                Vec::new()
             }
             InventoryCommand::SelectActionbarOffset { offset } => {
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     client.inventory.active_actionbar_slot =
                         offset_actionbar_slot(client.inventory.active_actionbar_slot, offset);
                 }
+                Vec::new()
             }
         }
     }
@@ -303,16 +305,20 @@ impl GameServer {
         );
     }
 
-    fn pick_up_dropped_item(&mut self, client_id: ClientId, dropped_item_id: DroppedItemId) {
+    fn pick_up_dropped_item(
+        &mut self,
+        client_id: ClientId,
+        dropped_item_id: DroppedItemId,
+    ) -> Vec<ServerEnvelope> {
         let Some(item) = self
             .dropped_items
             .get(&dropped_item_id)
             .map(|body| body.item.clone())
         else {
-            return;
+            return Vec::new();
         };
         let Some(client) = self.clients.get(&client_id) else {
-            return;
+            return Vec::new();
         };
         if !can_pick_up(
             player_eye_position(client.controller.position),
@@ -320,17 +326,27 @@ impl GameServer {
             client.controller.pitch,
             &item,
         ) {
-            return;
+            return Vec::new();
         }
 
         let Some(client) = self.clients.get_mut(&client_id) else {
-            return;
+            return Vec::new();
         };
-        if add_stack_to_inventory(&mut client.inventory, item.stack.clone()).is_none()
+        let requested = item.stack.quantity;
+        let remainder = add_stack_to_inventory(&mut client.inventory, item.stack.clone());
+        let accepted = match &remainder {
+            Some(rem) => requested.saturating_sub(rem.quantity),
+            None => requested,
+        };
+        if remainder.is_none()
             && let Some(body) = self.dropped_items.remove(&dropped_item_id)
         {
             self.dropped_item_physics.remove_body(body.body_handle);
         }
+        if accepted == 0 {
+            return Vec::new();
+        }
+        item_acquired_toast_envelopes(client_id, &item.stack.item_id, accepted)
     }
 
     fn merge_nearby_dropped_items(&mut self) -> Vec<(crate::items::ItemId, u16)> {
@@ -403,6 +419,29 @@ impl GameServer {
             (true, true) => Some((second_id, first_id)),
         }
     }
+}
+
+/// Builds the "you just acquired N items" toast envelope used by both the
+/// resource gathering path and the dropped-item pickup path. Lives in
+/// `server.rs` so submodules can share it without cross-module reach-around.
+pub(super) fn item_acquired_toast_envelopes(
+    client_id: ClientId,
+    item_id: &ItemId,
+    quantity: u16,
+) -> Vec<ServerEnvelope> {
+    if quantity == 0 {
+        return Vec::new();
+    }
+    let Some(definition) = item_definition(item_id) else {
+        return Vec::new();
+    };
+    vec![ServerEnvelope {
+        target: DeliveryTarget::Client(client_id),
+        message: ServerMessage::Toast(ToastMessage::new(
+            ToastKind::Success,
+            format!("+{quantity} {}", definition.name),
+        )),
+    }]
 }
 
 #[derive(Debug)]

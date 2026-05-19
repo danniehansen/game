@@ -7,6 +7,7 @@ mod runtime;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod toasts;
 
 pub(crate) use backdrop::MenuBackdropVisibility;
 pub(crate) use dialogs::{
@@ -25,3 +26,4 @@ pub(crate) use runtime::{ClientLogEntry, ClientLogKind, ClientRuntime, SessionSh
 pub(crate) use settings::{
     ClientSettings, ClientSettingsStore, DisplayMode, DisplayResolution, display_resolutions,
 };
+pub(crate) use toasts::{TOAST_FADE_SECONDS, TOAST_VISIBLE_SECONDS, Toast, ToastState};

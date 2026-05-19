@@ -10,7 +10,10 @@ use crate::{
     world::WorldData,
 };
 
-use super::{GameServer, inventory::add_stack_to_inventory, movement::player_eye_position};
+use super::{
+    GameServer, ServerEnvelope, inventory::add_stack_to_inventory, item_acquired_toast_envelopes,
+    movement::player_eye_position,
+};
 
 pub(super) fn initial_resource_nodes(
     world: &WorldData,
@@ -28,30 +31,30 @@ impl GameServer {
         &mut self,
         client_id: ClientId,
         command: ResourceGatherCommand,
-    ) {
+    ) -> Vec<ServerEnvelope> {
         let Some(node) = self.resource_nodes.get(&command.resource_node_id).cloned() else {
-            return;
+            return Vec::new();
         };
         let Some(node_definition) = resource_node_definition(&node.definition_id) else {
-            return;
+            return Vec::new();
         };
         let Some(client) = self.clients.get(&client_id) else {
-            return;
+            return Vec::new();
         };
         if self.tick < client.next_gather_tick {
-            return;
+            return Vec::new();
         }
 
         let Some(active_stack) = client.inventory.active_actionbar_stack() else {
-            return;
+            return Vec::new();
         };
         let Some(tool) =
             item_definition(&active_stack.item_id).and_then(|definition| definition.tool)
         else {
-            return;
+            return Vec::new();
         };
         if !node_definition.required_tool.allows(tool) {
-            return;
+            return Vec::new();
         }
         if !can_gather_resource_node(
             player_eye_position(client.controller.position),
@@ -59,32 +62,34 @@ impl GameServer {
             client.controller.pitch,
             &node,
         ) {
-            return;
+            return Vec::new();
         }
 
         let Some(payout) = next_resource_payout(&node, tool) else {
-            return;
+            return Vec::new();
         };
         if item_definition(&payout.item_id).is_none() {
-            return;
+            return Vec::new();
         }
 
         let Some(client) = self.clients.get_mut(&client_id) else {
-            return;
+            return Vec::new();
         };
         let accepted_quantity = accepted_inventory_quantity(&mut client.inventory, payout.clone());
         if accepted_quantity == 0 {
-            return;
+            return Vec::new();
         }
         client.next_gather_tick = self.tick + tool.cooldown_ticks.max(1);
 
-        let Some(node) = self.resource_nodes.get_mut(&command.resource_node_id) else {
-            return;
-        };
-        remove_resource_from_storage(node, &payout.item_id, accepted_quantity);
-        if resource_storage_is_empty(node) {
-            self.resource_nodes.remove(&command.resource_node_id);
+        let payout_id = payout.item_id.clone();
+        if let Some(node) = self.resource_nodes.get_mut(&command.resource_node_id) {
+            remove_resource_from_storage(node, &payout_id, accepted_quantity);
+            if resource_storage_is_empty(node) {
+                self.resource_nodes.remove(&command.resource_node_id);
+            }
         }
+
+        item_acquired_toast_envelopes(client_id, &payout_id, accepted_quantity)
     }
 }
 

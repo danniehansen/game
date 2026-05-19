@@ -261,6 +261,11 @@ impl ClientRuntime {
                 self.push_chat_message(from, text);
             }
             ServerMessage::ItemMerged { .. } => {}
+            ServerMessage::Toast(_) => {
+                // Toasts are routed straight to `ToastState` by the network
+                // tick system so they reach the UI without touching client
+                // log history. `apply_message` is intentionally a no-op here.
+            }
             ServerMessage::Heartbeat => {}
         }
     }

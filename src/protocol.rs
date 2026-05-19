@@ -6,7 +6,7 @@ use crate::world::{MapType, WorldData};
 pub type ClientId = u64;
 pub type SteamId = u64;
 
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 pub const GAME_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const SERVER_TICK_RATE_HZ: f32 = 20.0;
 pub const MAX_CHAT_LEN: usize = 240;
@@ -291,7 +291,31 @@ pub enum ServerMessage {
         item_id: crate::items::ItemId,
         quantity: u16,
     },
+    Toast(ToastMessage),
     Heartbeat,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum ToastKind {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToastMessage {
+    pub kind: ToastKind,
+    pub text: String,
+}
+
+impl ToastMessage {
+    pub fn new(kind: ToastKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+        }
+    }
 }
 
 impl ServerMessage {
@@ -302,7 +326,8 @@ impl ServerMessage {
             | Self::Kicked { .. }
             | Self::PlayerEvent(_)
             | Self::Chat(_)
-            | Self::ItemMerged { .. } => PacketDelivery::Reliable,
+            | Self::ItemMerged { .. }
+            | Self::Toast(_) => PacketDelivery::Reliable,
             Self::Snapshot(_) | Self::Correction(_) | Self::Heartbeat => PacketDelivery::Unreliable,
         }
     }

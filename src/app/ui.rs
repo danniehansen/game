@@ -8,6 +8,7 @@ mod multiplayer;
 mod options;
 mod pause;
 mod theme;
+mod toast;
 mod worlds;
 
 use bevy::window::{Monitor, PrimaryMonitor};
@@ -28,11 +29,12 @@ use self::{
     options::{OptionsBackTarget, options_ui},
     pause::pause_ui,
     theme::{ButtonKind, game_button},
+    toast::toast_ui,
     worlds::worlds_ui,
 };
 use super::state::{
     ClientRuntime, ClientSettings, MenuBackdropVisibility, MenuState, SaveStore, Screen,
-    SessionShutdownTasks, SteamUser,
+    SessionShutdownTasks, SteamUser, ToastState,
 };
 
 #[derive(SystemParam)]
@@ -43,6 +45,7 @@ pub(crate) struct UiResources<'w, 's> {
     settings: ResMut<'w, ClientSettings>,
     inventory_ui: ResMut<'w, super::state::InventoryUiState>,
     pickup_target: Res<'w, super::state::PickupTargetState>,
+    toasts: Res<'w, ToastState>,
     shutdown_tasks: ResMut<'w, SessionShutdownTasks>,
     button_sound_requests: ResMut<'w, ButtonSoundRequests>,
     store: Res<'w, SaveStore>,
@@ -126,6 +129,7 @@ pub(crate) fn ui_system(
                     &mut resources.runtime,
                     inventory_open,
                 );
+                toast_ui(ctx, &resources.toasts);
             }
             if resources.menu.pause_open && !resources.menu.pause_options_open {
                 pause_ui(

@@ -20,7 +20,7 @@ use self::{
     state::{
         ClientRuntime, ClientSettingsStore, GatherInputState, InventoryUiState, LookState,
         MenuBackdropVisibility, MenuState, PickupTargetState, SaveStore, SessionShutdownTasks,
-        SteamUser, ToolSwapState,
+        SteamUser, ToastState, ToolSwapState,
     },
     systems::{
         CameraImpactKick, ClientSystemSet, DroppedItemEntities, RemotePlayerEntities,
@@ -72,6 +72,7 @@ pub fn run_app() -> Result<()> {
         .insert_resource(ResourceNodeEntities::default())
         .insert_resource(RemotePlayerEntities::default())
         .insert_resource(LookState::default())
+        .insert_resource(ToastState::default())
         // `continuous()` rather than `desktop_app()`: the menu backdrop
         // camera pans continuously (see `menu_backdrop_camera_system`) and
         // needs steady frames to look smooth. Switching to reactive update

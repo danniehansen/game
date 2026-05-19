@@ -89,6 +89,71 @@ fn pickaxe_gathers_materials_and_deletes_empty_node() {
 }
 
 #[test]
+fn successful_gather_emits_success_toast_to_requesting_client() {
+    use crate::protocol::{ServerMessage, ToastKind};
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+    server.resource_nodes.clear();
+    server.resource_nodes.insert(99, coal_node(99, 5));
+    look_at_test_node(&mut server, client_id);
+    server.receive(
+        client_id,
+        ClientMessage::Inventory(InventoryCommand::SelectActionbarSlot { slot: 1 }),
+    );
+
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Gather(ResourceGatherCommand {
+            resource_node_id: 99,
+        }),
+    );
+
+    let toast = envelopes
+        .iter()
+        .find_map(|envelope| match &envelope.message {
+            ServerMessage::Toast(payload) => Some((envelope.target.clone(), payload.clone())),
+            _ => None,
+        })
+        .expect("server should emit a Toast envelope on successful gather");
+
+    assert_eq!(toast.0, super::DeliveryTarget::Client(client_id));
+    assert_eq!(toast.1.kind, ToastKind::Success);
+    assert!(
+        toast.1.text.starts_with('+') && toast.1.text.contains("Coal"),
+        "unexpected toast text: {}",
+        toast.1.text
+    );
+}
+
+#[test]
+fn failed_gather_emits_no_toast() {
+    use crate::protocol::ServerMessage;
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+    server.resource_nodes.clear();
+    server.resource_nodes.insert(99, coal_node(99, 5));
+    look_at_test_node(&mut server, client_id);
+    // Holding the hatchet (slot 0) instead of the pickaxe means the tool does
+    // not allow harvesting the coal node; no toast should fire.
+
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Gather(ResourceGatherCommand {
+            resource_node_id: 99,
+        }),
+    );
+
+    assert!(
+        !envelopes
+            .iter()
+            .any(|envelope| matches!(envelope.message, ServerMessage::Toast(_))),
+        "rejected gather should not push a toast"
+    );
+}
+
+#[test]
 fn resource_gathering_requires_matching_tool_and_server_cooldown() {
     let mut server = server();
     let client_id = connect_host(&mut server);
