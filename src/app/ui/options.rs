@@ -124,6 +124,7 @@ fn options_sections(
         ui.add_space(6.0);
         percent_slider_row(ui, "Music Volume", &mut settings.audio.music_volume);
         percent_slider_row(ui, "Effects Volume", &mut settings.audio.sfx_volume);
+        percent_slider_row(ui, "Interface Volume", &mut settings.audio.ui_volume);
     });
 
     ui.add_space(12.0);

@@ -23,6 +23,9 @@ pub(super) fn hud_ui(
     if settings.hud.show_fps {
         fps_ui(ctx, diagnostics);
     }
+    if runtime.connection_is_lagging() {
+        connection_lag_indicator(ctx);
+    }
 
     let Some(player) = runtime.local_view() else {
         return;
@@ -32,6 +35,31 @@ pub(super) fn hud_ui(
         .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
         .show(ctx, |ui| {
             health_bar(ui, player.health);
+        });
+}
+
+/// Small chip rendered in the top-left when the session has gone silent
+/// long enough to be suspicious. Stays out of the way during normal play
+/// but is immediately visible the moment the link goes wobbly.
+fn connection_lag_indicator(ctx: &egui::Context) {
+    egui::Area::new("connection_lag".into())
+        .anchor(egui::Align2::LEFT_TOP, [16.0, 14.0])
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(egui::Color32::from_rgba_unmultiplied(58, 24, 16, 220))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(220, 120, 80, 200),
+                ))
+                .corner_radius(5)
+                .inner_margin(egui::Margin::symmetric(10, 5))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Connection unstable")
+                            .size(12.5)
+                            .color(egui::Color32::from_rgb(252, 224, 196)),
+                    );
+                });
         });
 }
 

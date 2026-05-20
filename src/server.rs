@@ -415,7 +415,7 @@ impl GameServer {
             self.dropped_item_physics.remove_body(body.body_handle);
         }
         if accepted == 0 {
-            return Vec::new();
+            return inventory_full_toast_envelopes(client_id);
         }
         item_acquired_toast_envelopes(client_id, &item.stack.item_id, accepted)
     }
@@ -512,6 +512,17 @@ pub(super) fn item_acquired_toast_envelopes(
             ToastKind::Success,
             format!("+{quantity} {}", definition.name),
         )),
+    }]
+}
+
+/// "Your inventory is full" warning. Sent when a pickup or gather succeeds
+/// in every other respect (line of sight, valid tool, valid target) but the
+/// resulting stack cannot fit in the player's bag. Without this the action
+/// fails silently and the player just sees nothing happen.
+pub(super) fn inventory_full_toast_envelopes(client_id: ClientId) -> Vec<ServerEnvelope> {
+    vec![ServerEnvelope {
+        target: DeliveryTarget::Client(client_id),
+        message: ServerMessage::Toast(ToastMessage::new(ToastKind::Warning, "Inventory is full")),
     }]
 }
 

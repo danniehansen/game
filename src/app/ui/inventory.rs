@@ -28,8 +28,14 @@ pub(super) fn inventory_ui(
     runtime: &mut ClientRuntime,
     inventory_ui: &mut InventoryUiState,
     pickup_target: &PickupTargetState,
+    delta_seconds: f32,
 ) {
     inventory_ui.begin_frame();
+    inventory_ui.tick_slot_flashes(delta_seconds);
+    match runtime.local_player().and_then(PlayerState::inventory) {
+        Some(inventory) => inventory_ui.observe_inventory(inventory),
+        None => inventory_ui.clear_inventory_tracking(),
+    }
     if inventory_ui.was_open && !menu.inventory_open {
         ctx.memory_mut(|memory| memory.stop_text_input());
         inventory_ui.cancel_drag();

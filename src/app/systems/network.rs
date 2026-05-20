@@ -8,7 +8,7 @@ use crate::{
         },
         ui::ButtonSoundRequests,
     },
-    protocol::{ResourceImpactKind, ServerMessage, Vec3Net},
+    protocol::{ResourceImpactKind, ServerMessage, ToastKind, Vec3Net},
 };
 
 pub(crate) fn network_tick_system(
@@ -20,6 +20,7 @@ pub(crate) fn network_tick_system(
     mut remote_impacts: MessageWriter<RemoteImpactEvent>,
 ) {
     toasts.tick(time.delta_secs());
+    drain_pending_error_toasts(&mut runtime, &mut toasts);
 
     if !network_tick_allowed(&menu) {
         return;
@@ -37,6 +38,10 @@ pub(crate) fn network_tick_system(
         }
         None => Vec::new(),
     };
+
+    if messages.is_empty() {
+        runtime.tick_connection_silence(time.delta_secs());
+    }
 
     for message in messages {
         if let ServerMessage::Kicked { reason } = &message {
@@ -56,6 +61,16 @@ pub(crate) fn network_tick_system(
             remote_impacts.write(remote_impact_event(*position, *kind));
         }
         runtime.apply_message(message);
+    }
+
+    drain_pending_error_toasts(&mut runtime, &mut toasts);
+}
+
+/// Surface buffered error log entries as toasts so the player actually
+/// sees them — the in-memory `messages` history is only visible in chat.
+fn drain_pending_error_toasts(runtime: &mut ClientRuntime, toasts: &mut ToastState) {
+    for text in runtime.take_pending_error_toasts() {
+        toasts.push(ToastKind::Error, text);
     }
 }
 

@@ -21,9 +21,20 @@ pub(super) fn draw_slot(
     interactive: bool,
     inventory_ui: &mut InventoryUiState,
 ) {
+    let flash_strength = inventory_ui.slot_flash_strength(slot);
+
     if !interactive {
         let (_, rect) = ui.allocate_space(Vec2::splat(SLOT_SIZE));
-        paint_slot(ui, rect, stack, label.as_deref(), active, false, false);
+        paint_slot(
+            ui,
+            rect,
+            stack,
+            label.as_deref(),
+            active,
+            false,
+            false,
+            flash_strength,
+        );
         return;
     }
 
@@ -47,6 +58,7 @@ pub(super) fn draw_slot(
         active,
         hovered,
         is_drag_source,
+        flash_strength,
     );
 
     if pointer_over_slot {
@@ -81,6 +93,7 @@ pub(super) fn draw_slot(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint_slot(
     ui: &egui::Ui,
     rect: Rect,
@@ -89,6 +102,7 @@ pub(super) fn paint_slot(
     active: bool,
     hovered: bool,
     is_drag_source: bool,
+    flash_strength: f32,
 ) {
     let fill = if active {
         Color32::from_rgba_unmultiplied(21, 44, 72, 236)
@@ -119,6 +133,29 @@ pub(super) fn paint_slot(
             Color32::from_rgb(195, 207, 220),
         );
     }
+
+    if flash_strength > 0.0 {
+        paint_slot_flash(ui, rect, flash_strength);
+    }
+}
+
+/// Overlay drawn on top of a slot when its contents grew. A warm fill plus
+/// a brighter stroke pulse together: the fill makes the slot "glow" briefly,
+/// the stroke makes the rectangle pop out from neighboring slots.
+fn paint_slot_flash(ui: &egui::Ui, rect: Rect, strength: f32) {
+    let strength = strength.clamp(0.0, 1.0);
+    let fill_alpha = (140.0 * strength) as u8;
+    let stroke_alpha = (210.0 * strength) as u8;
+    if fill_alpha == 0 && stroke_alpha == 0 {
+        return;
+    }
+    let fill = Color32::from_rgba_unmultiplied(255, 214, 138, fill_alpha);
+    let stroke = Stroke::new(
+        2.0,
+        Color32::from_rgba_unmultiplied(255, 232, 180, stroke_alpha),
+    );
+    ui.painter()
+        .rect(rect, 5, fill, stroke, egui::StrokeKind::Inside);
 }
 
 fn paint_item_icon(ui: &egui::Ui, rect: Rect, stack: &ItemStack, is_drag_source: bool) {

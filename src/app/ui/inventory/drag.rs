@@ -87,6 +87,6 @@ pub(super) fn draw_drag_preview(ctx: &egui::Context, inventory_ui: &InventoryUiS
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(SLOT_SIZE), Sense::hover());
             let mut stack = drag.stack.clone();
             stack.quantity = drag.quantity;
-            paint_slot(ui, rect, Some(&stack), None, false, false, false);
+            paint_slot(ui, rect, Some(&stack), None, false, false, false, 0.0);
         });
 }

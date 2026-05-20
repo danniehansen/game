@@ -121,6 +121,7 @@ pub(crate) fn ui_system(
                     &mut resources.runtime,
                     &mut resources.inventory_ui,
                     &resources.pickup_target,
+                    delta_seconds,
                 );
                 let inventory_open = resources.menu.inventory_open;
                 chat_ui(

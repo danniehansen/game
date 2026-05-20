@@ -23,8 +23,8 @@ use self::{
         SessionShutdownTasks, SteamUser, ToastState, ToolSwapState,
     },
     systems::{
-        CameraImpactKick, ClientSystemSet, DroppedItemEntities, RemotePlayerEntities,
-        ResourceNodeEntities, app_quit_system, apply_display_settings_system,
+        CameraImpactKick, CameraMotionEffects, ClientSystemSet, DroppedItemEntities,
+        RemotePlayerEntities, ResourceNodeEntities, app_quit_system, apply_display_settings_system,
         apply_dropped_items_system, apply_held_item_visual_system, apply_resource_nodes_system,
         apply_snapshot_system, camera_follow_system, center_cursor_on_focus_system,
         chat_shortcut_system, client_input_system, gameplay_inventory_shortcuts_system,
@@ -69,6 +69,7 @@ pub fn run_app() -> Result<()> {
         .insert_resource(GatherInputState::default())
         .insert_resource(ToolSwapState::default())
         .insert_resource(CameraImpactKick::default())
+        .insert_resource(CameraMotionEffects::default())
         .insert_resource(DroppedItemEntities::default())
         .insert_resource(ResourceNodeEntities::default())
         .insert_resource(RemotePlayerEntities::default())

@@ -16,7 +16,7 @@ use crate::{
 
 use super::{
     DeliveryTarget, GameServer, ServerEnvelope, inventory::add_stack_to_inventory,
-    item_acquired_toast_envelopes, movement::player_eye_position,
+    inventory_full_toast_envelopes, item_acquired_toast_envelopes, movement::player_eye_position,
 };
 
 pub(super) fn initial_resource_nodes(
@@ -81,7 +81,10 @@ impl GameServer {
         };
         let accepted_quantity = accepted_inventory_quantity(&mut client.inventory, payout.clone());
         if accepted_quantity == 0 {
-            return Vec::new();
+            // Apply the cooldown anyway so the player can't spam a "full"
+            // toast every swing impact while their bag is full.
+            client.next_gather_tick = self.tick + tool.cooldown_ticks.max(1);
+            return inventory_full_toast_envelopes(client_id);
         }
         client.next_gather_tick = self.tick + tool.cooldown_ticks.max(1);
 

@@ -127,6 +127,65 @@ fn successful_gather_emits_success_toast_to_requesting_client() {
 }
 
 #[test]
+fn gather_into_full_inventory_emits_warning_toast_and_locks_cooldown() {
+    use crate::protocol::{ServerMessage, ToastKind};
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+    server.resource_nodes.clear();
+    server.resource_nodes.insert(99, coal_node(99, 5));
+    look_at_test_node(&mut server, client_id);
+    server.receive(
+        client_id,
+        ClientMessage::Inventory(InventoryCommand::SelectActionbarSlot { slot: 1 }),
+    );
+
+    // Saturate every inventory slot with a non-stackable item so the coal
+    // payout has nowhere to land.
+    let client = server
+        .clients
+        .get_mut(&client_id)
+        .expect("connected host should exist");
+    for slot in client.inventory.inventory_slots.iter_mut() {
+        *slot = Some(ItemStack::new(TEST_RELIC_ID, 1));
+    }
+    for (index, slot) in client.inventory.actionbar_slots.iter_mut().enumerate() {
+        if index == 1 {
+            // Keep the pickaxe equipped on slot 1.
+            continue;
+        }
+        *slot = Some(ItemStack::new(TEST_RELIC_ID, 1));
+    }
+    let tick_before = server.tick;
+
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Gather(ResourceGatherCommand {
+            resource_node_id: 99,
+        }),
+    );
+
+    let toast = envelopes
+        .iter()
+        .find_map(|envelope| match &envelope.message {
+            ServerMessage::Toast(payload) => Some(payload.clone()),
+            _ => None,
+        })
+        .expect("inventory-full gather should still produce a warning toast");
+    assert_eq!(toast.kind, ToastKind::Warning);
+    assert!(toast.text.to_ascii_lowercase().contains("full"));
+
+    let client = server
+        .clients
+        .get(&client_id)
+        .expect("connected host should exist");
+    assert!(
+        client.next_gather_tick > tick_before,
+        "inventory-full gather should advance the cooldown to prevent toast spam"
+    );
+}
+
+#[test]
 fn failed_gather_emits_no_toast() {
     use crate::protocol::ServerMessage;
 

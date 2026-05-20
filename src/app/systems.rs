@@ -15,7 +15,9 @@ use bevy::prelude::SystemSet;
 pub(crate) use audio::{
     main_menu_music_system, play_impact_sounds_system, setup_impact_sound_assets,
 };
-pub(crate) use camera::{CameraImpactKick, camera_follow_system, menu_backdrop_camera_system};
+pub(crate) use camera::{
+    CameraImpactKick, CameraMotionEffects, camera_follow_system, menu_backdrop_camera_system,
+};
 pub(crate) use display::apply_display_settings_system;
 pub(crate) use effects::{spawn_impact_effects_system, tick_impact_chips_system};
 pub(crate) use input::{

@@ -98,7 +98,23 @@ pub(crate) struct ClientRuntime {
     /// changes when a node spawns or is exhausted — most snapshots keep
     /// the same set and skip the rebuild.
     pub(crate) resource_node_collider_version: u64,
+    /// Wall-clock time (in seconds) since the most recent message of any
+    /// kind from the server. The server sends `Heartbeat` once per tick on
+    /// each connected client, so this only grows during a real interruption
+    /// (lossy link, server pause, dropped packets). The HUD reads this to
+    /// flag suspected lag without needing a dedicated RTT measurement.
+    pub(crate) seconds_since_last_message: f32,
+    /// Error log entries that should also surface as toasts. The runtime
+    /// can't push toasts directly (the toast resource isn't reachable from
+    /// here), so this buffer is drained by `network_tick_system` each
+    /// frame. Anything pushed via `push_error_message` shows up here.
+    pub(crate) pending_error_toasts: Vec<String>,
 }
+
+/// Threshold (in seconds without a server message) past which the HUD
+/// connection indicator switches to a "lagging" state. Server heartbeats
+/// land at ~1 Hz, so 2.5s is well outside normal variance.
+pub(crate) const CONNECTION_LAG_WARNING_SECONDS: f32 = 2.5;
 
 #[derive(Resource, Default)]
 pub(crate) struct SessionShutdownTasks(Vec<JoinHandle<Result<(), String>>>);
@@ -162,6 +178,8 @@ impl ClientRuntime {
         self.messages.clear();
         self.input_sequence = 0;
         self.resource_node_collider_version = 0;
+        self.seconds_since_last_message = 0.0;
+        self.pending_error_toasts.clear();
     }
 
     pub(crate) fn shutdown_in_background(
@@ -186,6 +204,8 @@ impl ClientRuntime {
         self.predicted_local = None;
         self.is_admin = false;
         self.resource_node_collider_version = 0;
+        self.seconds_since_last_message = 0.0;
+        self.pending_error_toasts.clear();
     }
 
     /// Rebuilds the world collision grid from the current world plus any
@@ -213,6 +233,9 @@ impl ClientRuntime {
     }
 
     pub(crate) fn apply_message(&mut self, message: ServerMessage) {
+        // Any server-originated payload — including the periodic Heartbeat —
+        // counts as proof the link is alive.
+        self.seconds_since_last_message = 0.0;
         match message {
             ServerMessage::Welcome {
                 client_id,
@@ -283,7 +306,33 @@ impl ClientRuntime {
     }
 
     pub(crate) fn push_error_message(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        self.pending_error_toasts.push(text.clone());
         self.push_message(ClientLogEntry::error(text));
+    }
+
+    /// Drain queued error texts so the network tick can publish them as
+    /// toasts. Errors stay in `messages` (the chat-log history) regardless.
+    pub(crate) fn take_pending_error_toasts(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_error_toasts)
+    }
+
+    /// Returns true when the session has gone long enough without a server
+    /// message that the connection should be flagged as suspect. Only
+    /// meaningful while a session is active.
+    pub(crate) fn connection_is_lagging(&self) -> bool {
+        self.session.is_some() && self.seconds_since_last_message >= CONNECTION_LAG_WARNING_SECONDS
+    }
+
+    /// Step the "time since last server message" counter. Called from the
+    /// network tick. Wall-clock seconds since the last successful receive.
+    pub(crate) fn tick_connection_silence(&mut self, delta_seconds: f32) {
+        if self.session.is_some() {
+            self.seconds_since_last_message =
+                (self.seconds_since_last_message + delta_seconds.max(0.0)).min(60.0);
+        } else {
+            self.seconds_since_last_message = 0.0;
+        }
     }
 
     pub(crate) fn push_chat_message(&mut self, from: impl Into<String>, text: impl Into<String>) {

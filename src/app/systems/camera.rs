@@ -5,7 +5,10 @@ use bevy::{
     render::camera::TemporalJitter,
 };
 
-use crate::items::ToolKind;
+use crate::{
+    controller::{SPRINT_SPEED, WALK_SPEED},
+    items::ToolKind,
+};
 
 use super::super::{
     EYE_HEIGHT,
@@ -19,6 +22,132 @@ const AXE_KICK_DURATION: f32 = 0.08;
 const PICKAXE_KICK_PITCH: f32 = 0.038;
 const PICKAXE_KICK_DOWN: f32 = 0.024;
 const PICKAXE_KICK_DURATION: f32 = 0.18;
+
+// Head bob: walk-speed cadence is ~2 footsteps/sec, which is one full sine
+// cycle per second (a step is half a cycle). BOB_FREQ_CYCLES_PER_METER *
+// walk_speed ≈ 1.0 cycle/sec keeps the bob in step with the player's gait.
+const BOB_FREQ_CYCLES_PER_METER: f32 = 0.192;
+// Peak bob displacement at walk speed. Sprint scales up linearly until
+// `BOB_AMP_SPEED_CAP_FRACTION` of walk speed, then plateaus so very fast
+// motion doesn't shake the camera apart.
+const BOB_BASE_AMP_METERS: f32 = 0.012;
+const BOB_AMP_SPEED_CAP_FRACTION: f32 = 1.5;
+const BOB_AMP_LERP_RATE: f32 = 12.0;
+
+// Sprint FOV: full +SPRINT_FOV_BOOST_DEG when horizontal speed reaches
+// SPRINT_SPEED, linear ramp from WALK_SPEED upward. The boost is small on
+// purpose — enough to register peripherally without warping the geometry.
+const BASE_FOV_DEG: f32 = 65.0;
+const SPRINT_FOV_BOOST_DEG: f32 = 5.0;
+const FOV_LERP_RATE: f32 = 8.0;
+
+// Landing dip: half-sine pulse on touchdown. Triggered when the player goes
+// from airborne to grounded with a downward velocity below the minimum
+// trigger, scaled toward the max amplitude at terminal fall speed.
+const LANDING_DIP_TRIGGER_SPEED: f32 = 2.0;
+const LANDING_DIP_MAX_FALL_SPEED: f32 = 22.0;
+const LANDING_DIP_MAX_METERS: f32 = 0.085;
+const LANDING_DIP_DURATION: f32 = 0.22;
+
+#[derive(Resource, Debug, Clone, Copy)]
+pub(crate) struct CameraMotionEffects {
+    bob_phase: f32,
+    bob_amp_smooth: f32,
+    fov_offset_deg: f32,
+    was_grounded: bool,
+    prev_fall_speed: f32,
+    dip_elapsed: f32,
+    dip_amplitude: f32,
+}
+
+impl Default for CameraMotionEffects {
+    fn default() -> Self {
+        Self {
+            bob_phase: 0.0,
+            bob_amp_smooth: 0.0,
+            fov_offset_deg: 0.0,
+            // Default to "grounded" so the first frame after a session
+            // start doesn't trigger a phantom landing dip.
+            was_grounded: true,
+            prev_fall_speed: 0.0,
+            dip_elapsed: 0.0,
+            dip_amplitude: 0.0,
+        }
+    }
+}
+
+impl CameraMotionEffects {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn advance(&mut self, dt: f32, horizontal_speed: f32, grounded: bool, fall_speed: f32) {
+        let dt = dt.max(0.0);
+
+        let bob_amp_target = if grounded {
+            let fraction = (horizontal_speed / WALK_SPEED).min(BOB_AMP_SPEED_CAP_FRACTION);
+            fraction * BOB_BASE_AMP_METERS
+        } else {
+            0.0
+        };
+        let bob_lerp = (BOB_AMP_LERP_RATE * dt).clamp(0.0, 1.0);
+        self.bob_amp_smooth += (bob_amp_target - self.bob_amp_smooth) * bob_lerp;
+        if grounded {
+            self.bob_phase +=
+                horizontal_speed * BOB_FREQ_CYCLES_PER_METER * std::f32::consts::TAU * dt;
+            // Keep phase bounded so very long sessions don't lose precision.
+            if self.bob_phase > std::f32::consts::TAU * 64.0 {
+                self.bob_phase -= std::f32::consts::TAU * 64.0;
+            }
+        }
+
+        let speed_above_walk = (horizontal_speed - WALK_SPEED).max(0.0);
+        let speed_fraction =
+            (speed_above_walk / (SPRINT_SPEED - WALK_SPEED).max(f32::EPSILON)).clamp(0.0, 1.0);
+        let fov_target = SPRINT_FOV_BOOST_DEG * speed_fraction;
+        let fov_lerp = (FOV_LERP_RATE * dt).clamp(0.0, 1.0);
+        self.fov_offset_deg += (fov_target - self.fov_offset_deg) * fov_lerp;
+
+        // Landing detection: airborne → grounded transition with enough
+        // downward speed to be felt. Use the *previous* frame's fall speed
+        // because grounding zeroes vy in the simulator.
+        if !self.was_grounded && grounded && self.prev_fall_speed >= LANDING_DIP_TRIGGER_SPEED {
+            let intensity = ((self.prev_fall_speed - LANDING_DIP_TRIGGER_SPEED)
+                / (LANDING_DIP_MAX_FALL_SPEED - LANDING_DIP_TRIGGER_SPEED))
+                .clamp(0.0, 1.0);
+            self.dip_amplitude = LANDING_DIP_MAX_METERS * (0.35 + 0.65 * intensity); // small but felt even on light landings
+            self.dip_elapsed = 0.0;
+        }
+        if self.dip_amplitude > 0.0 {
+            self.dip_elapsed += dt;
+            if self.dip_elapsed >= LANDING_DIP_DURATION {
+                self.dip_amplitude = 0.0;
+                self.dip_elapsed = 0.0;
+            }
+        }
+
+        // Cache for the next tick's landing detection.
+        self.prev_fall_speed = if grounded { 0.0 } else { fall_speed };
+        self.was_grounded = grounded;
+    }
+
+    fn bob_offset_y(&self) -> f32 {
+        self.bob_phase.sin() * self.bob_amp_smooth
+    }
+
+    fn landing_dip_y(&self) -> f32 {
+        if self.dip_amplitude <= 0.0 {
+            return 0.0;
+        }
+        let t = (self.dip_elapsed / LANDING_DIP_DURATION).clamp(0.0, 1.0);
+        let pulse = (t * std::f32::consts::PI).sin();
+        self.dip_amplitude * pulse
+    }
+
+    fn fov_radians(&self) -> f32 {
+        (BASE_FOV_DEG + self.fov_offset_deg).to_radians()
+    }
+}
 
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub(crate) struct CameraImpactKick {
@@ -131,34 +260,66 @@ pub(crate) fn menu_backdrop_camera_system(
     }
 }
 
+type FollowCameraData = (&'static mut Transform, Option<&'static mut Projection>);
+type FollowCameraFilter = (With<MainCamera>, Without<NetworkPlayer>);
+
 pub(crate) fn camera_follow_system(
     runtime: Res<ClientRuntime>,
     menu: Res<MenuState>,
     time: Res<Time>,
     mut kick: ResMut<CameraImpactKick>,
-    mut camera: Query<&mut Transform, (With<MainCamera>, Without<NetworkPlayer>)>,
+    mut motion: ResMut<CameraMotionEffects>,
+    mut camera: Query<FollowCameraData, FollowCameraFilter>,
 ) {
     if menu.screen != Screen::InGame {
+        motion.reset();
         return;
     }
 
-    let Ok(mut camera_transform) = camera.single_mut() else {
+    let Ok((mut camera_transform, projection)) = camera.single_mut() else {
         return;
     };
     let Some(player) = runtime.local_view() else {
+        motion.reset();
         return;
     };
 
     let (pitch_kick, down_kick) = kick.advance(time.delta_secs());
 
+    let (horizontal_speed, fall_speed, grounded) = runtime
+        .predicted_local
+        .as_ref()
+        .map(|controller| {
+            let vx = controller.velocity.x;
+            let vz = controller.velocity.z;
+            let speed = vx.mul_add(vx, vz * vz).sqrt();
+            // Positive fall_speed = falling. Velocity.y is downward when
+            // negative, so we negate (clamped to 0 on the way up).
+            let fall = (-controller.velocity.y).max(0.0);
+            (speed, fall, controller.grounded)
+        })
+        .unwrap_or((0.0, 0.0, true));
+
+    motion.advance(time.delta_secs(), horizontal_speed, grounded, fall_speed);
+
     let feet = Vec3::new(player.position.x, player.position.y, player.position.z);
     let eye = feet + Vec3::Y * EYE_HEIGHT;
+    let bob_y = motion.bob_offset_y();
+    let dip_y = motion.landing_dip_y();
     let base_rotation = Quat::from_euler(EulerRot::YXZ, player.yaw, player.pitch, 0.0);
     let rotation = base_rotation * Quat::from_rotation_x(-pitch_kick);
     // Apply the downward drop in world space — feels like the shoulders
     // absorbing the strike without the camera diving along the look vector.
-    camera_transform.translation = eye + Vec3::Y * -down_kick;
+    // Head bob and landing dip stack on the same axis: bob adds a small
+    // periodic offset, dip pulls down briefly on touchdown.
+    camera_transform.translation = eye + Vec3::Y * (bob_y - dip_y - down_kick);
     camera_transform.rotation = rotation;
+
+    if let Some(mut projection) = projection
+        && let Projection::Perspective(perspective) = projection.as_mut()
+    {
+        perspective.fov = motion.fov_radians();
+    }
 }
 
 fn menu_backdrop_transform(elapsed_seconds: f32) -> Transform {
@@ -353,6 +514,7 @@ mod tests {
         });
         app.insert_resource(Time::<()>::default());
         app.insert_resource(CameraImpactKick::default());
+        app.insert_resource(CameraMotionEffects::default());
         app.world_mut().spawn((
             MainCamera,
             Transform::from_xyz(0.0, 0.0, 0.0),
@@ -389,6 +551,101 @@ mod tests {
 
         let (after_pitch, after_drop) = kick.advance(PICKAXE_KICK_DURATION);
         assert_eq!((after_pitch, after_drop), (0.0, 0.0));
+    }
+
+    #[test]
+    fn motion_effects_reset_to_neutral_state() {
+        let mut motion = CameraMotionEffects {
+            bob_phase: 1.0,
+            bob_amp_smooth: 0.05,
+            fov_offset_deg: 3.0,
+            was_grounded: false,
+            prev_fall_speed: 10.0,
+            dip_elapsed: 0.1,
+            dip_amplitude: 0.04,
+        };
+
+        motion.reset();
+
+        assert_eq!(motion.bob_amp_smooth, 0.0);
+        assert_eq!(motion.fov_offset_deg, 0.0);
+        assert_eq!(motion.dip_amplitude, 0.0);
+        assert!(
+            motion.was_grounded,
+            "reset should default to grounded so it cannot trigger a phantom dip"
+        );
+        assert_eq!(motion.bob_offset_y(), 0.0);
+        assert_eq!(motion.landing_dip_y(), 0.0);
+    }
+
+    #[test]
+    fn head_bob_amplitude_scales_with_horizontal_speed_while_grounded() {
+        let mut motion = CameraMotionEffects::default();
+        // Several short steps so the smoothed amplitude has time to ramp up.
+        for _ in 0..40 {
+            motion.advance(1.0 / 60.0, WALK_SPEED, true, 0.0);
+        }
+        let walking_amp = motion.bob_amp_smooth;
+        assert!(walking_amp > 0.0);
+
+        let mut sprinting = CameraMotionEffects::default();
+        for _ in 0..40 {
+            sprinting.advance(1.0 / 60.0, SPRINT_SPEED, true, 0.0);
+        }
+        assert!(sprinting.bob_amp_smooth > walking_amp);
+    }
+
+    #[test]
+    fn head_bob_disengages_in_the_air() {
+        let mut motion = CameraMotionEffects::default();
+        for _ in 0..40 {
+            motion.advance(1.0 / 60.0, WALK_SPEED, true, 0.0);
+        }
+        let grounded_amp = motion.bob_amp_smooth;
+        assert!(grounded_amp > 0.0);
+
+        for _ in 0..40 {
+            motion.advance(1.0 / 60.0, WALK_SPEED, false, 0.0);
+        }
+        assert!(motion.bob_amp_smooth < grounded_amp * 0.1);
+    }
+
+    #[test]
+    fn sprint_fov_offset_ramps_up_with_speed() {
+        let mut motion = CameraMotionEffects::default();
+        for _ in 0..120 {
+            motion.advance(1.0 / 60.0, SPRINT_SPEED, true, 0.0);
+        }
+        assert!(motion.fov_offset_deg > SPRINT_FOV_BOOST_DEG * 0.85);
+
+        for _ in 0..120 {
+            motion.advance(1.0 / 60.0, WALK_SPEED, true, 0.0);
+        }
+        assert!(motion.fov_offset_deg < 0.05);
+    }
+
+    #[test]
+    fn landing_dip_triggers_on_fast_touchdown_and_decays() {
+        let mut motion = CameraMotionEffects::default();
+        // Airborne with a hard downward velocity.
+        motion.advance(1.0 / 60.0, 0.0, false, 12.0);
+        // Touchdown.
+        motion.advance(1.0 / 60.0, 0.0, true, 0.0);
+        let initial_dip = motion.landing_dip_y();
+        assert!(initial_dip > 0.0);
+
+        for _ in 0..30 {
+            motion.advance(1.0 / 60.0, 0.0, true, 0.0);
+        }
+        assert_eq!(motion.landing_dip_y(), 0.0);
+    }
+
+    #[test]
+    fn landing_dip_ignores_gentle_touchdowns() {
+        let mut motion = CameraMotionEffects::default();
+        motion.advance(1.0 / 60.0, 0.0, false, 0.5);
+        motion.advance(1.0 / 60.0, 0.0, true, 0.0);
+        assert_eq!(motion.landing_dip_y(), 0.0);
     }
 
     #[test]

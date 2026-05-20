@@ -1,6 +1,25 @@
-use bevy_egui::egui::{self, Align2, Color32, Frame, Id, Margin, Order, RichText, Sense, Stroke};
+use bevy_egui::egui::{
+    self, Align2, Color32, Frame, Id, LayerId, Margin, Order, RichText, Sense, Stroke,
+    emath::TSTransform,
+};
 
 use super::theme::{self, ButtonKind};
+
+/// Where the panel sits vertically as it animates in. The scrim has already
+/// faded, the panel rises this many pixels into place.
+const MODAL_SLIDE_OFFSET_PX: f32 = 18.0;
+/// Minimum scale at the start of the open animation. 0.94 is just enough to
+/// be felt as a "rising into place" gesture without making the modal feel
+/// like it's flying in from the back.
+const MODAL_MIN_SCALE: f32 = 0.94;
+/// How long the open/close transition lasts. The full slide, fade, and
+/// scale share the same window so the three motions feel coordinated.
+const MODAL_ANIMATION_SECS: f32 = 0.16;
+
+fn ease_out_cubic(t: f32) -> f32 {
+    let inv = 1.0 - t.clamp(0.0, 1.0);
+    1.0 - inv * inv * inv
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConfirmationChoice {
@@ -34,12 +53,13 @@ pub(super) fn modal_shell<T>(
     add_contents: impl FnOnce(&mut egui::Ui, &mut Option<T>),
 ) -> ModalShellOutput<T> {
     let id = Id::new(id);
-    let animation = ctx.animate_bool_with_time(id.with("animation"), open, 0.16);
-    if animation > 0.0 && animation < 1.0 {
+    let raw_animation =
+        ctx.animate_bool_with_time(id.with("animation"), open, MODAL_ANIMATION_SECS);
+    if raw_animation > 0.0 && raw_animation < 1.0 {
         ctx.request_repaint();
     }
 
-    if !open && animation <= 0.01 {
+    if !open && raw_animation <= 0.01 {
         return ModalShellOutput {
             choice: None,
             finished_closing: true,
@@ -47,6 +67,12 @@ pub(super) fn modal_shell<T>(
             clicked_outside: false,
         };
     }
+
+    // Ease the linear `animate_bool` curve so the slide-in/scale-up tapers
+    // gently into rest rather than coming to an abrupt stop. The backdrop
+    // alpha still rides the raw curve so the scrim never lingers behind a
+    // panel that is already invisible during the closing tail.
+    let eased = ease_out_cubic(raw_animation);
 
     let screen_rect = ctx.content_rect();
     let backdrop_response = egui::Area::new(id.with("backdrop"))
@@ -58,7 +84,7 @@ pub(super) fn modal_shell<T>(
             ui.painter().rect_filled(
                 local_rect,
                 0,
-                Color32::from_rgba_unmultiplied(1, 3, 8, (190.0 * animation) as u8),
+                Color32::from_rgba_unmultiplied(1, 3, 8, (190.0 * raw_animation) as u8),
             );
             response
         })
@@ -66,15 +92,16 @@ pub(super) fn modal_shell<T>(
 
     let panel_width = screen_rect.width().clamp(min_width, max_width);
     let mut choice = None;
+    let panel_layer = LayerId::new(Order::Tooltip, id.with("panel"));
     let panel_response = egui::Area::new(id.with("panel"))
         .order(Order::Tooltip)
         .anchor(
             Align2::CENTER_CENTER,
-            [0.0, 18.0 * (1.0 - animation.clamp(0.0, 1.0))],
+            [0.0, MODAL_SLIDE_OFFSET_PX * (1.0 - eased)],
         )
         .show(ctx, |ui| {
             ui.set_width(panel_width);
-            ui.multiply_opacity(animation);
+            ui.multiply_opacity(eased);
             Frame::NONE
                 .fill(Color32::from_rgba_unmultiplied(12, 17, 23, 246))
                 .stroke(Stroke::new(1.0, theme::panel_stroke()))
@@ -86,6 +113,19 @@ pub(super) fn modal_shell<T>(
                 });
         })
         .response;
+
+    // Apply a one-frame scale around the panel center on top of the slide
+    // + fade. `transform_layer_shapes` retroactively scales every shape
+    // that landed in the panel layer this frame. The interactive rect
+    // stays in original coordinates — which matters for very early clicks
+    // — but the 0.94 → 1.0 range is small enough that the visual and
+    // interactive rectangles align within a few pixels at the worst point.
+    let scale = MODAL_MIN_SCALE + (1.0 - MODAL_MIN_SCALE) * eased;
+    if (scale - 1.0).abs() > f32::EPSILON {
+        let center = panel_response.rect.center().to_vec2();
+        let transform = TSTransform::new(center * (1.0 - scale), scale);
+        ctx.transform_layer_shapes(panel_layer, transform);
+    }
 
     let confirm_shortcut_pressed = open && choice.is_none() && confirm_shortcut_pressed(ctx);
     let clicked_outside = open
@@ -203,6 +243,20 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::default(),
         }
+    }
+
+    #[test]
+    fn ease_out_cubic_starts_fast_and_settles_at_one() {
+        assert_eq!(ease_out_cubic(0.0), 0.0);
+        assert_eq!(ease_out_cubic(1.0), 1.0);
+        // Past halfway the curve should still be moving but well above the
+        // linear midpoint — that's the whole point of "ease-out".
+        let half = ease_out_cubic(0.5);
+        assert!(half > 0.5);
+        assert!(half < 1.0);
+        // Out-of-range inputs are clamped rather than overshooting.
+        assert_eq!(ease_out_cubic(-1.0), 0.0);
+        assert_eq!(ease_out_cubic(2.0), 1.0);
     }
 
     #[test]

@@ -295,6 +295,54 @@ fn pickup_emits_success_toast_to_requesting_client() {
 }
 
 #[test]
+fn pickup_into_full_inventory_emits_warning_toast() {
+    use crate::protocol::{ServerMessage, ToastKind};
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+    let client = server
+        .clients
+        .get_mut(&client_id)
+        .expect("connected host should exist");
+    // Saturate every slot with a non-stackable item so the incoming ore can
+    // never find room.
+    for slot in client.inventory.inventory_slots.iter_mut() {
+        *slot = Some(ItemStack::new(TEST_RELIC_ID, 1));
+    }
+    for slot in client.inventory.actionbar_slots.iter_mut() {
+        *slot = Some(ItemStack::new(TEST_RELIC_ID, 1));
+    }
+
+    server.spawn_dropped_item(
+        ItemStack::new(TEST_ORE_ID, 3),
+        Vec3Net::new(0.0, SERVER_EYE_HEIGHT - 0.28, -2.0),
+        Vec3Net::ZERO,
+        0.0,
+    );
+    let dropped_item_id = server.snapshot().dropped_items[0].id;
+
+    let envelopes = server.receive(
+        client_id,
+        ClientMessage::Inventory(InventoryCommand::PickUp { dropped_item_id }),
+    );
+
+    let toast = envelopes
+        .iter()
+        .find_map(|envelope| match &envelope.message {
+            ServerMessage::Toast(payload) => Some((envelope.target.clone(), payload.clone())),
+            _ => None,
+        })
+        .expect("inventory-full pickup should still produce a warning toast");
+    assert_eq!(toast.0, super::DeliveryTarget::Client(client_id));
+    assert_eq!(toast.1.kind, ToastKind::Warning);
+    assert!(
+        toast.1.text.to_ascii_lowercase().contains("full"),
+        "toast should mention inventory being full, got {}",
+        toast.1.text
+    );
+}
+
+#[test]
 fn failed_pickup_emits_no_toast() {
     use crate::protocol::ServerMessage;
 

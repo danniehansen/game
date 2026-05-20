@@ -3,7 +3,7 @@ use crate::protocol::Vec3Net;
 pub const WALK_SPEED: f32 = 5.2;
 pub const SPRINT_SPEED: f32 = 8.4;
 const SIDE_WALK_SPEED: f32 = 4.4;
-const SPRINT_STRAFE_SPEED: f32 = 5.7;
+const SPRINT_STRAFE_SPEED: f32 = 6.4;
 const BACKPEDAL_SPEED: f32 = 3.8;
 const GROUND_ACCELERATION: f32 = 68.0;
 const GROUND_DECELERATION: f32 = 76.0;
