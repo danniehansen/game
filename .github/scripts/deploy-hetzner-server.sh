@@ -116,9 +116,9 @@ RuntimeDirectory=${service_name}
 RuntimeDirectoryMode=0750
 UMask=007
 ExecStart=${current_link}/game server --bind ${bind_addr} --auth ${auth_mode} --world ${world_path} --admin-socket ${admin_socket}
-ExecStop=/bin/sh -c '${current_link}/game admin --socket ${admin_socket} announce "${shutdown_reason}" || true'
+ExecStop=/bin/sh -c '[ -S "${admin_socket}" ] && ${current_link}/game admin --socket ${admin_socket} announce "${shutdown_reason}" || true'
 ExecStop=/bin/sleep 3
-ExecStop=/bin/sh -c '${current_link}/game admin --socket ${admin_socket} shutdown --reason "${shutdown_reason}" || true'
+ExecStop=/bin/sh -c '[ -S "${admin_socket}" ] && ${current_link}/game admin --socket ${admin_socket} shutdown --reason "${shutdown_reason}" || true'
 ExecStop=/bin/sleep 5
 KillSignal=SIGINT
 TimeoutStopSec=45
@@ -140,6 +140,10 @@ as_root systemctl enable "${service_name}"
 
 announce() {
   local message="$1"
+  if [[ ! -S "${admin_socket}" ]]; then
+    echo "skipping announce — ${admin_socket} is not available (server not running?)"
+    return 0
+  fi
   if [[ -x "${current_link}/game" ]]; then
     as_service_user "${current_link}/game" admin --socket "${admin_socket}" announce "${message}" || true
   fi
@@ -153,12 +157,19 @@ fi
 
 as_root systemctl start "${service_name}"
 
+socket_ready=0
 for _ in {1..20}; do
   if [[ -S "${admin_socket}" ]]; then
+    socket_ready=1
     break
   fi
   sleep 1
 done
 
-announce "Server is back online with ${version}. Please download the latest client before reconnecting."
+if [[ "${socket_ready}" -eq 1 ]]; then
+  announce "Server is back online with ${version}. Please download the latest client before reconnecting."
+else
+  echo "admin socket ${admin_socket} did not appear within the timeout — skipping post-deploy announcement" >&2
+fi
+
 as_root systemctl --no-pager --full status "${service_name}"

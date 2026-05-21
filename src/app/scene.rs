@@ -24,6 +24,7 @@ pub(crate) use components::{
     HeldItemVisual, MainCamera, NetworkDroppedItem, NetworkPlayer, NetworkResourceNode,
     tree_mesh_height,
 };
+pub(crate) use mesh::PLAYER_HEAD_TOP_LOCAL_Y;
 pub(crate) use sky::update_sky_system;
 pub(crate) use world::apply_world_scene_system;
 #[cfg(test)]
@@ -199,6 +200,7 @@ mod tests {
                 grounded: true,
                 last_processed_input: 0,
                 is_admin: false,
+                chat_bubble: None,
                 inventory: None,
             }],
             dropped_items: Vec::new(),

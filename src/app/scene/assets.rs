@@ -11,14 +11,13 @@ use super::{
         low_poly_bag_mesh, low_poly_birch_tree_large_mesh, low_poly_birch_tree_medium_mesh,
         low_poly_birch_tree_small_mesh, low_poly_hatchet_mesh, low_poly_ore_node_mesh,
         low_poly_pickaxe_mesh, low_poly_pine_tree_large_mesh, low_poly_pine_tree_medium_mesh,
-        low_poly_pine_tree_small_mesh,
+        low_poly_pine_tree_small_mesh, low_poly_player_mesh,
     },
     sky::{initial_distance_fog, setup_sky},
 };
 
 use crate::app::{EYE_HEIGHT, PLAYER_VISUAL_CENTER_Y};
 
-pub(crate) const REMOTE_PLAYER_COLOR: Color = Color::srgb(0.95, 0.61, 0.25);
 pub(crate) const WORLD_COLOR: Color = Color::srgb(0.18, 0.34, 0.22);
 pub(crate) const DROPPED_BAG_COLOR: Color = Color::srgb(0.42, 0.31, 0.18);
 pub(crate) const HELD_BAG_COLOR: Color = Color::srgb(0.50, 0.38, 0.24);
@@ -110,8 +109,12 @@ pub(crate) fn setup_scene(
 
     commands.insert_resource(super::world::WorldSceneState::default());
     commands.insert_resource(PlayerVisualAssets {
-        mesh: meshes.add(Capsule3d::new(0.35, 0.9)),
-        remote_material: materials.add(REMOTE_PLAYER_COLOR),
+        mesh: meshes.add(low_poly_player_mesh()),
+        remote_material: materials.add(StandardMaterial {
+            base_color: VERTEX_MATERIAL_COLOR,
+            perceptual_roughness: 0.92,
+            ..default()
+        }),
     });
     commands.insert_resource(ItemVisualAssets {
         dropped_mesh: meshes.add(low_poly_bag_mesh()),

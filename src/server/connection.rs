@@ -76,6 +76,7 @@ impl GameServer {
             is_admin,
             last_seen_tick: self.tick,
             next_gather_tick: self.tick,
+            chat_bubble: None,
         };
 
         self.clients.insert(client_id, client);
@@ -159,6 +160,10 @@ impl GameServer {
                     grounded: client.controller.grounded,
                     last_processed_input: client.controller.last_processed_input,
                     is_admin: client.is_admin,
+                    chat_bubble: client
+                        .chat_bubble
+                        .as_ref()
+                        .map(|bubble| bubble.text.clone()),
                     inventory,
                 }
             })

@@ -183,6 +183,7 @@ mod tests {
             grounded: true,
             last_processed_input: 0,
             is_admin: false,
+            chat_bubble: None,
             inventory: None,
         }
     }

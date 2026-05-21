@@ -74,6 +74,46 @@ fn chat_is_sanitized_and_broadcast_by_server() {
 }
 
 #[test]
+fn chat_populates_speaker_bubble_for_snapshot_window() {
+    use crate::protocol::CHAT_BUBBLE_DURATION_SECONDS;
+
+    let mut server = server();
+    let client_id = connect_host(&mut server);
+
+    let _ = server.receive(
+        client_id,
+        ClientMessage::Chat {
+            text: "hi there".to_owned(),
+        },
+    );
+
+    let snapshot = server.snapshot_for(client_id);
+    let speaker = snapshot
+        .players
+        .iter()
+        .find(|player| player.client_id == client_id)
+        .expect("speaker should be in snapshot");
+    assert_eq!(speaker.chat_bubble.as_deref(), Some("hi there"));
+
+    let dt = 1.0 / SERVER_TICK_RATE_HZ;
+    let ticks_to_expire = (CHAT_BUBBLE_DURATION_SECONDS * SERVER_TICK_RATE_HZ) as u64 + 1;
+    for _ in 0..ticks_to_expire {
+        server.tick(dt);
+    }
+
+    let snapshot = server.snapshot_for(client_id);
+    let speaker = snapshot
+        .players
+        .iter()
+        .find(|player| player.client_id == client_id)
+        .expect("speaker should still be in snapshot");
+    assert!(
+        speaker.chat_bubble.is_none(),
+        "bubble should auto-clear after the broadcast window"
+    );
+}
+
+#[test]
 fn empty_chat_is_ignored_by_server() {
     let mut server = server();
     let client_id = connect_host(&mut server);

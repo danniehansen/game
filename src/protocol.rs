@@ -9,11 +9,15 @@ use crate::{
 pub type ClientId = u64;
 pub type SteamId = u64;
 
-pub const PROTOCOL_VERSION: u32 = 17;
+pub const PROTOCOL_VERSION: u32 = 18;
 pub const GAME_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const SERVER_TICK_RATE_HZ: f32 = 20.0;
 pub const MAX_CHAT_LEN: usize = 240;
 pub const MAX_HEALTH: f32 = 100.0;
+/// How long a chat bubble floats above a player after they send a chat
+/// message. Long enough to read a sentence at a glance, short enough that
+/// idle chatter doesn't permanently clutter the world.
+pub const CHAT_BUBBLE_DURATION_SECONDS: f32 = 6.0;
 pub const INVENTORY_SLOT_COUNT: usize = 40;
 pub const ACTIONBAR_SLOT_COUNT: usize = 9;
 
@@ -422,6 +426,12 @@ pub struct PlayerState {
     pub grounded: bool,
     pub last_processed_input: u64,
     pub is_admin: bool,
+    /// Most recent in-world chat line, while it's still floating above the
+    /// player. Cleared server-side after [`CHAT_BUBBLE_DURATION_SECONDS`].
+    /// Populated on every snapshot entry — even peers — so remote players
+    /// can render speech bubbles above each other's heads.
+    #[serde(default)]
+    pub chat_bubble: Option<String>,
     /// Only populated for the receiving client. Peer entries omit the
     /// inventory to keep snapshots small (49 slots × N players × 20 Hz
     /// adds up fast) and to avoid leaking other players' contents.

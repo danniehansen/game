@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# When the game binary is launched directly (not through `cargo run`),
+# CARGO_MANIFEST_DIR is missing and Bevy's AssetServer falls back to the
+# directory of the executable — which is `target/debug/` during local dev
+# and has no `assets/` folder. Setting BEVY_ASSET_ROOT here gives every
+# binary launched from this script — and any child processes it spawns,
+# like the multiplayer-test client windows — a stable, project-relative
+# asset root.
+export BEVY_ASSET_ROOT="$ROOT"
+
 cmd="${1:-help}"
 if [[ $# -gt 0 ]]; then
   shift
@@ -28,6 +37,24 @@ copy_release_binary() {
 
   mkdir -p "$out_dir"
   cp "$src" "$out"
+
+  # Bevy's default AssetServer looks for an `assets/` folder next to the
+  # running executable. The dev workflow finds it via CARGO_MANIFEST_DIR, but
+  # a published binary has no such fallback — without the folder beside it,
+  # every asset_server.load(...) silently fails and the build runs with no
+  # audio, no fonts, no textures.
+  if [[ -d assets ]]; then
+    rm -rf "${out_dir}/assets"
+    # Use rsync so the copy stays in sync on repeated runs and skips
+    # macOS junk that would otherwise bloat the bundle.
+    rsync -a --delete \
+      --exclude '.DS_Store' \
+      --exclude '*.swp' \
+      assets/ "${out_dir}/assets/"
+  else
+    echo "warning: assets/ directory missing — published binary will run without sound or art" >&2
+  fi
+
   echo "built ${out}"
 }
 
@@ -57,6 +84,11 @@ case "$cmd" in
     ;;
   admin)
     cargo run --bin game -- admin "$@"
+    ;;
+  multiplayer-test)
+    close_existing_game
+    cargo build --bin game
+    ./target/debug/game multiplayer-test "$@"
     ;;
   check)
     cargo check --all-targets
@@ -102,6 +134,8 @@ Commands:
   dev-fast     Like dev, but with bevy/dynamic_linking for faster rebuilds.
   server       Run a dedicated authoritative server. Pass --help after server for flags.
   admin        Send an announcement or shutdown command to a dedicated server admin socket.
+  multiplayer-test
+               Launch a fresh local server + two auto-connecting client windows for multiplayer iteration.
   check        Run cargo check for all targets.
   test         Run unit/integration tests.
   lint         Run rustfmt check and clippy with warnings denied.

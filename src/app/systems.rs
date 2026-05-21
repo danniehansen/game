@@ -1,4 +1,5 @@
 mod audio;
+mod auto_connect;
 mod camera;
 mod display;
 pub(crate) mod effects;
@@ -14,6 +15,9 @@ use bevy::prelude::SystemSet;
 
 pub(crate) use audio::{
     main_menu_music_system, play_impact_sounds_system, setup_impact_sound_assets,
+};
+pub(crate) use auto_connect::{
+    AutoConnectRequest, auto_connect_poll_system, auto_connect_start_system,
 };
 pub(crate) use camera::{
     CameraImpactKick, CameraMotionEffects, camera_follow_system, menu_backdrop_camera_system,
@@ -68,4 +72,5 @@ pub(crate) enum ClientSystemSet {
     NodeDeathTick,
     MainMenuMusic,
     MenuBackdropCamera,
+    AutoConnect,
 }

@@ -4,9 +4,10 @@ use crate::{
     controller::{BlockGrid, PlayerController},
     items::{can_pick_up, normalize_stack, stack_limit},
     protocol::{
-        ACTIONBAR_SLOT_COUNT, ChatMessage, ClientId, ClientMessage, DroppedItemId,
-        DroppedWorldItem, InventoryCommand, ItemStack, PlayerInventoryState, ResourceNodeId,
-        ResourceNodeState, SERVER_TICK_RATE_HZ, ServerMessage, SteamId, Vec3Net, sanitize_chat,
+        ACTIONBAR_SLOT_COUNT, CHAT_BUBBLE_DURATION_SECONDS, ChatMessage, ClientId, ClientMessage,
+        DroppedItemId, DroppedWorldItem, InventoryCommand, ItemStack, PlayerInventoryState,
+        ResourceNodeId, ResourceNodeState, SERVER_TICK_RATE_HZ, ServerMessage, SteamId, Vec3Net,
+        sanitize_chat,
     },
     save::{PersistedPlayer, WorldSave, WorldStateSave},
     steam::AuthMode,
@@ -15,6 +16,12 @@ use crate::{
 };
 
 const CLIENT_STALE_TIMEOUT_TICKS: u64 = 20 * 10;
+
+/// How many ticks a chat bubble floats above the speaker before the server
+/// clears it from snapshots. Derived from
+/// [`CHAT_BUBBLE_DURATION_SECONDS`] so the visible lifetime is the same
+/// regardless of tick rate.
+const CHAT_BUBBLE_DURATION_TICKS: u64 = (CHAT_BUBBLE_DURATION_SECONDS * SERVER_TICK_RATE_HZ) as u64;
 
 /// Cadence of the routine [`ServerMessage::WorldTime`] broadcast. One per
 /// real minute keeps clients aligned against drift without flooding the
@@ -239,18 +246,24 @@ impl GameServer {
                 }
                 Vec::new()
             }
-            ClientMessage::Chat { text } => sanitize_chat(&text)
-                .and_then(|text| {
-                    self.clients.get(&client_id).map(|client| ServerEnvelope {
-                        target: DeliveryTarget::Broadcast,
-                        message: ServerMessage::Chat(ChatMessage {
-                            from: client.name.clone(),
-                            text,
-                        }),
-                    })
-                })
-                .into_iter()
-                .collect(),
+            ClientMessage::Chat { text } => {
+                let Some(text) = sanitize_chat(&text) else {
+                    return Vec::new();
+                };
+                let expires_tick = self.tick.saturating_add(CHAT_BUBBLE_DURATION_TICKS);
+                let Some(client) = self.clients.get_mut(&client_id) else {
+                    return Vec::new();
+                };
+                client.chat_bubble = Some(ChatBubble {
+                    text: text.clone(),
+                    expires_tick,
+                });
+                let from = client.name.clone();
+                vec![ServerEnvelope {
+                    target: DeliveryTarget::Broadcast,
+                    message: ServerMessage::Chat(ChatMessage { from, text }),
+                }]
+            }
             ClientMessage::Command { text } => self.apply_command(client_id, text),
             ClientMessage::Inventory(command) => self.apply_inventory_command(client_id, command),
             ClientMessage::Gather(command) => self.apply_gather_command(client_id, command),
@@ -300,6 +313,7 @@ impl GameServer {
         self.dropped_item_physics
             .step(delta_seconds, &mut self.dropped_items);
         self.tick_resource_node_respawn(delta_seconds);
+        self.expire_chat_bubbles();
 
         let mut envelopes = self.disconnect_stale_clients();
         if self.tick.is_multiple_of(DROPPED_ITEM_MERGE_INTERVAL_TICKS) {
@@ -335,6 +349,17 @@ impl GameServer {
             });
         }
         envelopes
+    }
+
+    fn expire_chat_bubbles(&mut self) {
+        let tick = self.tick;
+        for client in self.clients.values_mut() {
+            if let Some(bubble) = &client.chat_bubble
+                && bubble.expires_tick <= tick
+            {
+                client.chat_bubble = None;
+            }
+        }
     }
 
     fn mark_client_seen(&mut self, client_id: ClientId) {
@@ -566,6 +591,16 @@ pub(super) struct ServerClient {
     pub(super) is_admin: bool,
     pub(super) last_seen_tick: u64,
     pub(super) next_gather_tick: u64,
+    /// Most recent chat line + the tick it stops being broadcast. Empty
+    /// outside the bubble window. Snapshots copy `text` so peer clients can
+    /// render speech bubbles above the speaker's head.
+    pub(super) chat_bubble: Option<ChatBubble>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ChatBubble {
+    pub(super) text: String,
+    pub(super) expires_tick: u64,
 }
 
 pub(super) fn persisted_player_from(client: &ServerClient) -> PersistedPlayer {

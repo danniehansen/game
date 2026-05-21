@@ -7,6 +7,7 @@ mod modal;
 mod multiplayer;
 mod options;
 mod pause;
+mod peer_overlay;
 mod splash;
 mod theme;
 mod toast;
@@ -29,6 +30,7 @@ use self::{
     multiplayer::multiplayer_ui,
     options::{OptionsBackTarget, options_ui},
     pause::pause_ui,
+    peer_overlay::{PeerOverlay, PeerOverlayParams, collect_peer_overlay_entries, peer_overlay_ui},
     splash::loading_splash_ui,
     theme::{ButtonKind, game_button},
     toast::toast_ui,
@@ -56,6 +58,7 @@ pub(crate) struct UiResources<'w, 's> {
     time: Option<Res<'w, Time>>,
     diagnostics: Res<'w, DiagnosticsStore>,
     primary_monitor: Query<'w, 's, &'static Monitor, With<PrimaryMonitor>>,
+    peer_overlay: PeerOverlayParams<'w, 's>,
 }
 
 pub(crate) fn ui_system(
@@ -118,6 +121,25 @@ pub(crate) fn ui_system(
                     &resources.diagnostics,
                     &resources.settings,
                 );
+                let snapshot_players = resources
+                    .runtime
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.players.as_slice())
+                    .unwrap_or(&[]);
+                let peers = collect_peer_overlay_entries(
+                    resources.peer_overlay.network_players.iter(),
+                    snapshot_players,
+                    resources.runtime.client_id,
+                );
+                let camera = resources
+                    .peer_overlay
+                    .camera
+                    .single()
+                    .ok()
+                    .map(|(camera, transform)| (camera, *transform));
+                peer_overlay_ui(ctx, PeerOverlay { camera, peers });
+
                 inventory_ui(
                     ctx,
                     &mut resources.menu,

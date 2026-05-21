@@ -3,6 +3,8 @@ mod state;
 mod systems;
 mod ui;
 
+use std::net::SocketAddr;
+
 use anyhow::Result;
 use bevy::{
     diagnostic::FrameTimeDiagnosticsPlugin, prelude::*, transform::TransformSystems,
@@ -23,10 +25,11 @@ use self::{
         SaveStore, SessionShutdownTasks, SteamUser, ToastState, ToolSwapState,
     },
     systems::{
-        CameraImpactKick, CameraMotionEffects, ClientSystemSet, DroppedItemEntities,
-        RemotePlayerEntities, ResourceNodeEntities, app_quit_system, apply_display_settings_system,
-        apply_dropped_items_system, apply_held_item_visual_system, apply_resource_nodes_system,
-        apply_snapshot_system, camera_follow_system, center_cursor_on_focus_system,
+        AutoConnectRequest, CameraImpactKick, CameraMotionEffects, ClientSystemSet,
+        DroppedItemEntities, RemotePlayerEntities, ResourceNodeEntities, app_quit_system,
+        apply_display_settings_system, apply_dropped_items_system, apply_held_item_visual_system,
+        apply_resource_nodes_system, apply_snapshot_system, auto_connect_poll_system,
+        auto_connect_start_system, camera_follow_system, center_cursor_on_focus_system,
         chat_shortcut_system, client_input_system, gameplay_inventory_shortcuts_system,
         main_menu_music_system, menu_backdrop_camera_system, mouse_look_system,
         network_tick_system, play_impact_sounds_system, save_client_settings_system,
@@ -106,7 +109,13 @@ fn configure_client_schedule(app: &mut App) {
     }
 }
 
-pub fn run_app() -> Result<()> {
+/// Entry point used by the `client` CLI subcommand.
+///
+/// Pass `auto_connect = Some(addr)` to skip the menu and immediately attempt
+/// a network connection to `addr` once the app is up. The multiplayer-test
+/// helper relies on this so the two spawned client windows land directly in
+/// the shared test world.
+pub fn run_app(auto_connect: Option<SocketAddr>) -> Result<()> {
     let store = WorldStore::platform_default()?;
     store.ensure_exists()?;
 
@@ -120,6 +129,9 @@ pub fn run_app() -> Result<()> {
     let window_settings = settings.display;
 
     let mut app = App::new();
+    if let Some(addr) = auto_connect {
+        app.insert_resource(AutoConnectRequest { addr });
+    }
     app.insert_resource(ClearColor(Color::srgb(0.015, 0.018, 0.023)))
         .insert_resource(SaveStore(store))
         .insert_resource(SteamUser(user))
@@ -298,6 +310,12 @@ pub fn run_app() -> Result<()> {
         .add_systems(
             Update,
             menu_backdrop_camera_system.in_set(ClientSystemSet::MenuBackdropCamera),
+        )
+        .add_systems(
+            Update,
+            (auto_connect_start_system, auto_connect_poll_system)
+                .chain()
+                .in_set(ClientSystemSet::AutoConnect),
         )
         .run();
 
