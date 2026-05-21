@@ -8,10 +8,10 @@ use crate::{
     protocol::ToastKind,
 };
 
-use super::theme;
+use super::theme::{self, COMPACT_ROW_HEIGHT};
 
 const TOAST_WIDTH: f32 = 280.0;
-const TOAST_HEIGHT: f32 = 34.0;
+const TOAST_HEIGHT: f32 = COMPACT_ROW_HEIGHT;
 const TOAST_GAP: f32 = 6.0;
 const RIGHT_MARGIN: f32 = 18.0;
 const BOTTOM_MARGIN: f32 = 64.0;

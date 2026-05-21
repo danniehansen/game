@@ -8,20 +8,11 @@ use bevy_egui::egui;
 
 use crate::app::state::{ClientRuntime, MenuState, SaveStore, Screen, SteamUser};
 
-use super::theme::{self, ButtonKind};
+use super::theme::{self, BOUNDED_PANEL_VERTICAL_PADDING, ButtonKind};
 use dialogs::{create_world_dialog_ui, edit_world_dialog_ui, open_create_world_dialog};
 use session::poll_singleplayer_start;
 pub(super) use session::refresh_worlds;
 use table::{available_table_height, draw_world_headers, draw_world_table};
-
-pub(super) const BUTTON_HEIGHT: f32 = 34.0;
-
-/// Vertical breathing room reserved between the worlds panel and the top of
-/// the window. Chosen so the panel doesn't bump against the screen edge on
-/// any supported resolution while still letting the table grow on tall
-/// monitors.
-const WORLDS_PANEL_TOP_PADDING: f32 = 56.0;
-const WORLDS_PANEL_BOTTOM_PADDING: f32 = 56.0;
 
 pub(super) fn worlds_ui(
     ctx: &egui::Context,
@@ -39,8 +30,8 @@ pub(super) fn worlds_ui(
         ctx,
         "worlds_panel",
         920.0,
-        WORLDS_PANEL_TOP_PADDING,
-        WORLDS_PANEL_BOTTOM_PADDING,
+        BOUNDED_PANEL_VERTICAL_PADDING,
+        BOUNDED_PANEL_VERTICAL_PADDING,
         |ui| {
             let has_worlds = !menu.worlds.is_empty() || !menu.corrupted_worlds.is_empty();
             let starting_world = menu.world_start.is_some();

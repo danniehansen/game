@@ -48,6 +48,10 @@ case "$cmd" in
     close_existing_game
     cargo run --bin game -- client "$@"
     ;;
+  dev-fast)
+    close_existing_game
+    cargo run --features dev-fast --bin game -- client "$@"
+    ;;
   server)
     cargo run --bin game -- server "$@"
     ;;
@@ -95,6 +99,7 @@ Usage: ./cli <command> [args]
 
 Commands:
   dev          Close existing Game windows and run the Bevy client.
+  dev-fast     Like dev, but with bevy/dynamic_linking for faster rebuilds.
   server       Run a dedicated authoritative server. Pass --help after server for flags.
   admin        Send an announcement or shutdown command to a dedicated server admin socket.
   check        Run cargo check for all targets.

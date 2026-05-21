@@ -8,6 +8,8 @@ default-run = "game"
 [features]
 default = []
 steam = ["lightyear/steam"]
+# Dev-only. Speeds up local iteration; do not enable for release builds.
+dev-fast = ["bevy/dynamic_linking"]
 
 [dependencies]
 anyhow = "1.0.102"
@@ -23,3 +25,9 @@ serde_json = "1.0.149"
 thiserror = "2.0.18"
 uuid = { version = "1.23.1", features = ["serde", "v4"] }
 zstd = "0.13.3"
+
+# Optimize dependencies (bevy, rapier3d, lightyear) even in dev builds so
+# `./cli dev` hits playable frame rates. Our own crate stays at the default
+# opt-level so incremental rebuilds remain fast.
+[profile.dev.package."*"]
+opt-level = 3

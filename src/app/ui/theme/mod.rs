@@ -1,6 +1,7 @@
 mod buttons;
 mod colors;
 mod frames;
+mod spacing;
 mod text;
 mod tooltip;
 
@@ -17,6 +18,7 @@ pub(super) use frames::{
     anchored_panel, apply_game_style, backdrop_cover, bounded_panel, inset_frame, panel_frame,
     screen_scrim,
 };
+pub(super) use spacing::{BOUNDED_PANEL_VERTICAL_PADDING, COMPACT_ROW_HEIGHT};
 pub(super) use text::{field_label, muted, section, status_text, text_input, title};
 pub(super) use tooltip::{anchored_wow_tooltip, wow_tooltip};
 

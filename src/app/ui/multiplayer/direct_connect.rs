@@ -18,14 +18,14 @@ use crate::{
 use self::target::{DirectConnectTarget, direct_connect_target, resolve_direct_connect_target};
 use super::super::{
     modal,
-    theme::{self, ButtonKind},
+    theme::{self, ButtonKind, COMPACT_ROW_HEIGHT},
 };
 
 mod target;
 
 const DIRECT_CONNECT_HOST_INPUT_ID: &str = "direct_connect_host_input";
 const DIRECT_CONNECT_PORT_INPUT_ID: &str = "direct_connect_port_input";
-const DIRECT_CONNECT_FIELD_HEIGHT: f32 = 34.0;
+const DIRECT_CONNECT_FIELD_HEIGHT: f32 = COMPACT_ROW_HEIGHT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirectConnectChoice {

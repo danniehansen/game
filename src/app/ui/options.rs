@@ -3,14 +3,14 @@ use bevy_egui::egui;
 
 use crate::app::state::{ClientSettings, DisplayMode, MenuState, Screen, display_resolutions};
 
-use super::theme::{self, ButtonKind};
+use super::theme::{self, ButtonKind, COMPACT_ROW_HEIGHT};
 
 const OPTIONS_PANEL_WIDTH: f32 = 720.0;
 const OPTIONS_SCREEN_MARGIN_X: f32 = 56.0;
 const OPTIONS_SCREEN_MARGIN_Y: f32 = 24.0;
 const OPTIONS_PANEL_INNER_X: f32 = 48.0;
 const OPTIONS_PANEL_INNER_Y: f32 = 44.0;
-const OPTIONS_HEADER_HEIGHT: f32 = 34.0;
+const OPTIONS_HEADER_HEIGHT: f32 = COMPACT_ROW_HEIGHT;
 const OPTIONS_HEADER_GAP: f32 = 12.0;
 const OPTIONS_SCROLL_PADDING_Y: f32 = 8.0;
 const OPTIONS_MIN_BODY_HEIGHT: f32 = 96.0;

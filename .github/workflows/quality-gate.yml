@@ -34,15 +34,10 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Cache Cargo data
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: quality-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            quality-${{ runner.os }}-${{ runner.arch }}-
+          prefix-key: quality
+          shared-key: ${{ runner.os }}-${{ runner.arch }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check

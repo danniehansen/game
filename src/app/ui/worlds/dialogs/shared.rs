@@ -1,11 +1,10 @@
 use bevy_egui::egui;
 
-use super::super::super::theme;
-use super::super::BUTTON_HEIGHT;
+use super::super::super::theme::{self, COMPACT_ROW_HEIGHT};
 
 pub(super) fn field_label(ui: &mut egui::Ui, text: &str) {
     ui.add_sized(
-        [88.0, BUTTON_HEIGHT],
+        [88.0, COMPACT_ROW_HEIGHT],
         egui::Label::new(theme::field_label(text)),
     );
 }

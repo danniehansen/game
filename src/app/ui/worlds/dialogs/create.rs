@@ -8,9 +8,9 @@ use crate::{
 
 use super::super::super::{
     modal,
-    theme::{self, ButtonKind},
+    theme::{self, ButtonKind, COMPACT_ROW_HEIGHT},
 };
-use super::super::{BUTTON_HEIGHT, session::refresh_worlds};
+use super::super::session::refresh_worlds;
 use super::shared::{field_label, select_all_text};
 
 const CREATE_WORLD_NAME_INPUT_ID: &str = "create_world_name_input";
@@ -152,7 +152,7 @@ fn draw_create_world_form(
     ui.horizontal(|ui| {
         field_label(ui, "Name");
         let name_response = ui.add_sized(
-            [ui.available_width(), BUTTON_HEIGHT],
+            [ui.available_width(), COMPACT_ROW_HEIGHT],
             theme::text_input(&mut dialog.name).id(egui::Id::new(CREATE_WORLD_NAME_INPUT_ID)),
         );
         if name_response.gained_focus() {
@@ -208,7 +208,7 @@ fn draw_create_world_form(
             field_label(ui, "Seed");
             let seed_width = (ui.available_width() - 92.0).max(120.0);
             ui.add_sized(
-                [seed_width, BUTTON_HEIGHT],
+                [seed_width, COMPACT_ROW_HEIGHT],
                 theme::text_input(&mut dialog.seed).id(egui::Id::new(CREATE_WORLD_SEED_INPUT_ID)),
             );
             if theme::compact_button(ui, "Refresh", ButtonKind::Secondary, 82.0).clicked() {

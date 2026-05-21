@@ -50,12 +50,12 @@ impl ButtonDensity {
     fn spec(self) -> ButtonSpec {
         match self {
             Self::Menu => ButtonSpec {
-                height: 46.0,
+                height: super::spacing::MENU_ROW_HEIGHT,
                 font_size: 14.0,
                 strong: true,
             },
             Self::Compact => ButtonSpec {
-                height: 34.0,
+                height: super::spacing::COMPACT_ROW_HEIGHT,
                 font_size: 13.0,
                 strong: false,
             },

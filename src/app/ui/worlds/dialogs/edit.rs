@@ -8,9 +8,9 @@ use crate::{
 
 use super::super::super::{
     modal,
-    theme::{self, ButtonKind},
+    theme::{self, ButtonKind, COMPACT_ROW_HEIGHT},
 };
-use super::super::{BUTTON_HEIGHT, session::refresh_worlds};
+use super::super::session::refresh_worlds;
 use super::shared::{field_label, select_all_text};
 
 const EDIT_WORLD_NAME_INPUT_ID: &str = "edit_world_name_input";
@@ -124,7 +124,7 @@ fn draw_edit_world_form(
     ui.horizontal(|ui| {
         field_label(ui, "Name");
         let name_response = ui.add_sized(
-            [ui.available_width(), BUTTON_HEIGHT],
+            [ui.available_width(), COMPACT_ROW_HEIGHT],
             theme::text_input(&mut dialog.name).id(egui::Id::new(EDIT_WORLD_NAME_INPUT_ID)),
         );
         if name_response.gained_focus() {
@@ -191,7 +191,7 @@ fn draw_edit_world_form(
 
 fn locked_setting(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, BUTTON_HEIGHT), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(width, COMPACT_ROW_HEIGHT), egui::Sense::hover());
     ui.painter().rect(
         rect,
         4,

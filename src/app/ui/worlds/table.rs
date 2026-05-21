@@ -6,10 +6,8 @@ use crate::{
     save::{CorruptedWorld, WorldSummary},
 };
 
-use super::super::theme::{self, ButtonKind};
-use super::{
-    BUTTON_HEIGHT, dialogs::open_create_world_dialog, session::start_singleplayer_in_background,
-};
+use super::super::theme::{self, ButtonKind, COMPACT_ROW_HEIGHT};
+use super::{dialogs::open_create_world_dialog, session::start_singleplayer_in_background};
 
 const INSET_FRAME_HORIZONTAL_PADDING: f32 = 28.0;
 const ROW_HEIGHT: f32 = 60.0;
@@ -81,7 +79,7 @@ fn draw_empty_worlds_state(
         egui::vec2(table_content_width, table_height),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            let content_height = 14.0 + 8.0 + BUTTON_HEIGHT;
+            let content_height = 14.0 + 8.0 + COMPACT_ROW_HEIGHT;
             ui.add_space(((table_height - content_height) * 0.5).max(24.0));
             ui.label(theme::muted("No worlds found."));
             ui.add_space(8.0);
@@ -158,22 +156,22 @@ fn draw_world_row(
 
     let button_y = cells.actions.center().y;
     let start_rect = egui::Rect::from_min_size(
-        egui::pos2(cells.actions.left(), button_y - BUTTON_HEIGHT * 0.5),
-        egui::vec2(START_BUTTON_WIDTH, BUTTON_HEIGHT),
+        egui::pos2(cells.actions.left(), button_y - COMPACT_ROW_HEIGHT * 0.5),
+        egui::vec2(START_BUTTON_WIDTH, COMPACT_ROW_HEIGHT),
     );
     let edit_rect = egui::Rect::from_min_size(
         egui::pos2(
             start_rect.right() + ACTION_BUTTON_GAP,
-            button_y - BUTTON_HEIGHT * 0.5,
+            button_y - COMPACT_ROW_HEIGHT * 0.5,
         ),
-        egui::vec2(EDIT_BUTTON_WIDTH, BUTTON_HEIGHT),
+        egui::vec2(EDIT_BUTTON_WIDTH, COMPACT_ROW_HEIGHT),
     );
     let delete_rect = egui::Rect::from_min_size(
         egui::pos2(
             edit_rect.right() + ACTION_BUTTON_GAP,
-            button_y - BUTTON_HEIGHT * 0.5,
+            button_y - COMPACT_ROW_HEIGHT * 0.5,
         ),
-        egui::vec2(DELETE_BUTTON_WIDTH, BUTTON_HEIGHT),
+        egui::vec2(DELETE_BUTTON_WIDTH, COMPACT_ROW_HEIGHT),
     );
 
     let starting_world = menu.world_start.as_ref().map(|attempt| attempt.world_id);
@@ -273,22 +271,22 @@ fn draw_corrupted_world_row(
 
     let button_y = cells.actions.center().y;
     let start_rect = egui::Rect::from_min_size(
-        egui::pos2(cells.actions.left(), button_y - BUTTON_HEIGHT * 0.5),
-        egui::vec2(START_BUTTON_WIDTH, BUTTON_HEIGHT),
+        egui::pos2(cells.actions.left(), button_y - COMPACT_ROW_HEIGHT * 0.5),
+        egui::vec2(START_BUTTON_WIDTH, COMPACT_ROW_HEIGHT),
     );
     let edit_rect = egui::Rect::from_min_size(
         egui::pos2(
             start_rect.right() + ACTION_BUTTON_GAP,
-            button_y - BUTTON_HEIGHT * 0.5,
+            button_y - COMPACT_ROW_HEIGHT * 0.5,
         ),
-        egui::vec2(EDIT_BUTTON_WIDTH, BUTTON_HEIGHT),
+        egui::vec2(EDIT_BUTTON_WIDTH, COMPACT_ROW_HEIGHT),
     );
     let delete_rect = egui::Rect::from_min_size(
         egui::pos2(
             edit_rect.right() + ACTION_BUTTON_GAP,
-            button_y - BUTTON_HEIGHT * 0.5,
+            button_y - COMPACT_ROW_HEIGHT * 0.5,
         ),
-        egui::vec2(DELETE_BUTTON_WIDTH, BUTTON_HEIGHT),
+        egui::vec2(DELETE_BUTTON_WIDTH, COMPACT_ROW_HEIGHT),
     );
 
     paint_disabled_button(ui, start_rect, "Start");
